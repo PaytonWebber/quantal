@@ -1,12 +1,13 @@
 //! .tq index file format: a serialized Index plus one text label per vector.
 //!
 //! Little-endian throughout. Layout:
-//!   magic "TQX1"
+//!   magic "TQX2"
 //!   u32 dim, u32 max_edges, u64 vector_count
-//!   u64 ef_construction, u64 entry_id, u32 layer_count
+//!   u64 ef_construction, u64 entry_id, u32 layer_count, u8 has_originals
 //!   rotation matrix: dim*dim f32
 //!   payloads, each: u64 id, chunks_count * 3 bytes (true 3-byte TQ3 packing),
 //!                   f32 bias_scale, f32 bias_shift, f32 renorm_scalar
+//!   originals (when has_originals): vector_count * dim f32 (rotated space)
 //!   layers, each: u64 node_count, then nodes:
 //!                   u64 id, words_count * u64 bit vector,
 //!                   u32 edge_count, edge_count * u64 neighbors
@@ -14,7 +15,7 @@
 
 const std = @import("std");
 
-const magic = "TQX1";
+const magic = "TQX2";
 
 pub const Header = struct {
     dim: u32,
@@ -97,6 +98,7 @@ pub fn serialize(
     try w.int(u64, index.routing.ef_construction);
     try w.int(u64, index.routing.entry_id);
     try w.int(u32, @intCast(index.routing.layers.items.len));
+    try w.int(u8, @intFromBool(index.hasOriginals()));
 
     try w.raw(std.mem.sliceAsBytes(index.rotation.rows));
 
@@ -110,6 +112,10 @@ pub fn serialize(
         try w.float(payload.bias_scale);
         try w.float(payload.bias_shift);
         try w.float(payload.renorm_scalar);
+    }
+
+    if (index.hasOriginals()) {
+        try w.raw(std.mem.sliceAsBytes(index.originals.items));
     }
 
     for (index.routing.layers.items) |layer| {
@@ -147,6 +153,7 @@ pub fn deserialize(
     const ef_construction = try r.int(u64);
     const entry_id = try r.int(u64);
     const layer_count = try r.int(u32);
+    const has_originals = (try r.int(u8)) != 0;
 
     const rotation_rows = try allocator.alloc(f32, dim * dim);
     errdefer allocator.free(rotation_rows);
@@ -159,6 +166,7 @@ pub fn deserialize(
     };
     errdefer index.payloads.deinit(allocator);
     errdefer index.routing.deinit(allocator);
+    errdefer index.originals.deinit(allocator);
     errdefer allocator.free(index.rotate_buf);
 
     try index.payloads.ensureTotalCapacityPrecise(allocator, @intCast(vector_count));
@@ -172,6 +180,14 @@ pub fn deserialize(
         payload.bias_shift = try r.float();
         payload.renorm_scalar = try r.float();
         index.payloads.appendAssumeCapacity(payload);
+    }
+
+    index.store_originals = has_originals;
+    if (has_originals) {
+        const float_count: usize = @intCast(vector_count * dim);
+        try index.originals.ensureTotalCapacityPrecise(allocator, float_count);
+        index.originals.items.len = float_count;
+        @memcpy(std.mem.sliceAsBytes(index.originals.items), try r.raw(float_count * 4));
     }
 
     for (0..layer_count) |layer_idx| {

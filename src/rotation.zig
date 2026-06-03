@@ -58,22 +58,23 @@ pub fn RandomRotation(comptime dim: usize) type {
             }
         }
 
-        /// FMA-vectorized dot product; FP reassociation is explicit here
-        /// because Zig (correctly) won't reorder a scalar accumulation chain.
-        fn dot(a: []const f32, b: []const f32) f32 {
-            const width = std.simd.suggestVectorLength(f32) orelse 4;
-            var acc: @Vector(width, f32) = @splat(0);
-            var i: usize = 0;
-            while (i + width <= a.len) : (i += width) {
-                const va: @Vector(width, f32) = a[i..][0..width].*;
-                const vb: @Vector(width, f32) = b[i..][0..width].*;
-                acc = @mulAdd(@Vector(width, f32), va, vb, acc);
-            }
-            var total = @reduce(.Add, acc);
-            while (i < a.len) : (i += 1) total = @mulAdd(f32, a[i], b[i], total);
-            return total;
-        }
     };
+}
+
+/// FMA-vectorized dot product; FP reassociation is explicit here because
+/// Zig (correctly) won't reorder a scalar accumulation chain.
+pub fn dot(a: []const f32, b: []const f32) f32 {
+    const width = std.simd.suggestVectorLength(f32) orelse 4;
+    var acc: @Vector(width, f32) = @splat(0);
+    var i: usize = 0;
+    while (i + width <= a.len) : (i += width) {
+        const va: @Vector(width, f32) = a[i..][0..width].*;
+        const vb: @Vector(width, f32) = b[i..][0..width].*;
+        acc = @mulAdd(@Vector(width, f32), va, vb, acc);
+    }
+    var total = @reduce(.Add, acc);
+    while (i < a.len) : (i += 1) total = @mulAdd(f32, a[i], b[i], total);
+    return total;
 }
 
 test "rotation rows are orthonormal" {

@@ -28,6 +28,11 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
         payloads: std.ArrayList(Payload) = .empty,
         routing: Graph,
         rotate_buf: []f32,
+        /// Rotated FP32 originals, dim floats per vector, kept for the
+        /// stage-3 exact rerank. Flip `store_originals` off before the first
+        /// add to trade that recall for 4x less memory (3-bit-only scoring).
+        originals: std.ArrayList(f32) = .empty,
+        store_originals: bool = true,
 
         pub fn init(allocator: std.mem.Allocator, ef_construction: usize, seed: u64) !Self {
             var rot = try Rotation.init(allocator, seed);
@@ -44,6 +49,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             self.rotation.deinit(allocator);
             self.payloads.deinit(allocator);
             self.routing.deinit(allocator);
+            self.originals.deinit(allocator);
             allocator.free(self.rotate_buf);
             self.* = undefined;
         }
@@ -60,8 +66,20 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             try self.payloads.append(allocator, Payload.encode(id, self.rotate_buf));
             errdefer _ = self.payloads.pop();
 
+            if (self.store_originals) {
+                std.debug.assert(self.originals.items.len == internal_id * dim);
+                try self.originals.appendSlice(allocator, self.rotate_buf);
+            }
+            errdefer if (self.store_originals) self.originals.shrinkRetainingCapacity(internal_id * dim);
+
             const bits = Graph.BitVec.fromF32(self.rotate_buf);
             try self.routing.insert(allocator, internal_id, bits);
+        }
+
+        /// True when every vector has a stored FP32 original, enabling the
+        /// stage-3 exact rerank.
+        pub fn hasOriginals(self: *const Self) bool {
+            return self.originals.items.len == self.payloads.items.len * dim;
         }
 
         /// Preallocated query state. Created once (or whenever the index has
@@ -71,7 +89,13 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             rotated_query: []f32,
             decoded_query: []f32,
             score_lut: []f32,
+            /// Stage-2 output / stage-3 input: the top rerank_factor * k
+            /// candidates by quantized score (ids are internal indices).
+            rerank_pool: []SearchResult,
             m: usize,
+            /// Stage-3 pool size as a multiple of k. 1 disables the benefit
+            /// (pool == k); 4 is a good default.
+            rerank_factor: usize = 4,
             /// true (default): stage 2 scores against the query's own 3-bit
             /// roundtrip. false: scores against the full-precision rotated
             /// query, matching the paper's asymmetric estimator (Thm. 2) —
@@ -84,11 +108,13 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                     .rotated_query = try allocator.alloc(f32, dim),
                     .decoded_query = try allocator.alloc(f32, dim),
                     .score_lut = try allocator.alloc(f32, dim * 8),
+                    .rerank_pool = try allocator.alloc(SearchResult, m),
                     .m = m,
                 };
                 errdefer allocator.free(ctx.rotated_query);
                 errdefer allocator.free(ctx.decoded_query);
                 errdefer allocator.free(ctx.score_lut);
+                errdefer allocator.free(ctx.rerank_pool);
                 try ctx.scratch.ensureCapacity(allocator, @max(index.len(), 1), m);
                 return ctx;
             }
@@ -98,6 +124,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 allocator.free(self.rotated_query);
                 allocator.free(self.decoded_query);
                 allocator.free(self.score_lut);
+                allocator.free(self.rerank_pool);
                 self.* = undefined;
             }
         };
@@ -112,6 +139,11 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
 
         /// Same as `search`, for a query already in rotated space (e.g.
         /// assembled from decoded payloads, which live there).
+        ///
+        /// Stage 1 routes the 1-bit graph to m candidates; stage 2 ranks
+        /// them by quantized LUT score; when FP32 originals are stored,
+        /// stage 3 exactly rescores the top rerank_factor * k of those, so
+        /// quantization noise can no longer reorder the final results.
         pub fn searchRotated(self: *const Self, ctx: *SearchContext, rotated: []const f32, out: []SearchResult) usize {
             std.debug.assert(rotated.len == dim);
             if (self.len() == 0 or out.len == 0) return 0;
@@ -127,12 +159,39 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
 
             const candidates = self.routing.route(&query_bits, ctx.m, &ctx.scratch);
 
-            var topk = heap_mod.TopK.fromBuffer(out);
+            if (!self.hasOriginals()) {
+                var topk = heap_mod.TopK.fromBuffer(out);
+                for (candidates) |candidate| {
+                    const payload = &self.payloads.items[@intCast(candidate.id)];
+                    topk.offer(.{
+                        .id = payload.id,
+                        .score = payload.scoreLut(ctx.score_lut, query_sum),
+                    });
+                }
+                return topk.sortDescending();
+            }
+
+            // Stage 2: keep the rerank pool by quantized score, tracking
+            // internal indices so stage 3 can address the stored originals.
+            const pool_size = @min(@max(ctx.rerank_factor * out.len, out.len), ctx.rerank_pool.len);
+            var pool = heap_mod.TopK.fromBuffer(ctx.rerank_pool[0..pool_size]);
             for (candidates) |candidate| {
                 const payload = &self.payloads.items[@intCast(candidate.id)];
-                topk.offer(.{
-                    .id = payload.id,
+                pool.offer(.{
+                    .id = candidate.id,
                     .score = payload.scoreLut(ctx.score_lut, query_sum),
+                });
+            }
+            const pooled = pool.sortDescending();
+
+            // Stage 3: exact FP32 inner products over the pool.
+            var topk = heap_mod.TopK.fromBuffer(out);
+            for (ctx.rerank_pool[0..pooled]) |entry| {
+                const internal: usize = @intCast(entry.id);
+                const original = self.originals.items[internal * dim ..][0..dim];
+                topk.offer(.{
+                    .id = self.payloads.items[internal].id,
+                    .score = rotation_mod.dot(rotated, original),
                 });
             }
             return topk.sortDescending();
@@ -203,6 +262,69 @@ test "clustered recall: queries land in their own cluster" {
     // Well-separated clusters with sigma=0.05 noise: expect near-perfect
     // cluster purity in the top-10.
     try std.testing.expect(correct * 10 >= total * 8);
+}
+
+test "exact rerank returns the stored vector itself on self-query" {
+    const dim = 32;
+    const Idx = Index(dim, 8);
+    const allocator = std.testing.allocator;
+
+    var index = try Idx.init(allocator, 32, 3);
+    defer index.deinit(allocator);
+    try std.testing.expect(index.store_originals);
+
+    var prng = std.Random.DefaultPrng.init(17);
+    const rand = prng.random();
+    var stored: [40][dim]f32 = undefined;
+    for (&stored, 0..) |*coords, i| {
+        var norm_sq: f32 = 0;
+        for (coords) |*c| {
+            c.* = rand.floatNorm(f32);
+            norm_sq += c.* * c.*;
+        }
+        const inv = 1.0 / @sqrt(norm_sq);
+        for (coords) |*c| c.* *= inv;
+        try index.add(allocator, i, coords);
+    }
+    try std.testing.expect(index.hasOriginals());
+
+    var ctx = try Idx.SearchContext.init(allocator, &index, 40);
+    defer ctx.deinit(allocator);
+
+    // With exact stage-3 scoring, querying a stored unit vector must rank
+    // the vector itself first with score == cosine(v, v) == 1.
+    var out: [5]SearchResult = undefined;
+    for (stored, 0..) |coords, i| {
+        const count = index.search(&ctx, &coords, &out);
+        try std.testing.expect(count == 5);
+        try std.testing.expectEqual(@as(u64, i), out[0].id);
+        try std.testing.expectApproxEqAbs(@as(f32, 1.0), out[0].score, 1e-3);
+    }
+}
+
+test "store_originals=false falls back to quantized scoring" {
+    const dim = 32;
+    const Idx = Index(dim, 4);
+    const allocator = std.testing.allocator;
+
+    var index = try Idx.init(allocator, 16, 5);
+    defer index.deinit(allocator);
+    index.store_originals = false;
+
+    var prng = std.Random.DefaultPrng.init(13);
+    const rand = prng.random();
+    var coords: [dim]f32 = undefined;
+    for (0..50) |i| {
+        for (&coords) |*c| c.* = rand.floatNorm(f32);
+        try index.add(allocator, i, &coords);
+    }
+    try std.testing.expect(!index.hasOriginals());
+
+    var ctx = try Idx.SearchContext.init(allocator, &index, 16);
+    defer ctx.deinit(allocator);
+    var out: [5]SearchResult = undefined;
+    for (&coords) |*c| c.* = rand.floatNorm(f32);
+    try std.testing.expectEqual(@as(usize, 5), index.search(&ctx, &coords, &out));
 }
 
 test "results are sorted by descending score" {

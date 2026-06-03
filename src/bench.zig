@@ -37,6 +37,7 @@ const Config = struct {
     stage1_widths: []const usize = &default_stage1_widths,
     symmetric: bool = true,
     profile: bool = false,
+    exact_rerank: bool = true,
 };
 
 const Dataset = struct {
@@ -97,6 +98,7 @@ fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, datas
     var timer = Stopwatch.begin(io);
     var index = try Idx.init(allocator, config.ef_construction, config.seed);
     defer index.deinit(allocator);
+    index.store_originals = config.exact_rerank;
     for (0..dataset.n) |i| {
         try index.add(allocator, i, dataset.base[i * dim ..][0..dim]);
     }
@@ -201,12 +203,33 @@ fn profilePhases(comptime Idx: type, io: std.Io, index: *const Idx, dataset: *co
             route_ns += timer.read();
 
             timer.reset();
-            var topk = qj.heap.TopK.fromBuffer(&out);
-            for (candidates) |candidate| {
-                const payload = &index.payloads.items[@intCast(candidate.id)];
-                topk.offer(.{ .id = payload.id, .score = payload.scoreLut(ctx.score_lut, query_sum) });
+            var count: usize = 0;
+            if (index.hasOriginals()) {
+                const pool_size = @min(ctx.rerank_factor * out.len, ctx.rerank_pool.len);
+                var pool = qj.heap.TopK.fromBuffer(ctx.rerank_pool[0..pool_size]);
+                for (candidates) |candidate| {
+                    const payload = &index.payloads.items[@intCast(candidate.id)];
+                    pool.offer(.{ .id = candidate.id, .score = payload.scoreLut(ctx.score_lut, query_sum) });
+                }
+                const pooled = pool.sortDescending();
+                var topk = qj.heap.TopK.fromBuffer(&out);
+                for (ctx.rerank_pool[0..pooled]) |entry| {
+                    const internal: usize = @intCast(entry.id);
+                    const original = index.originals.items[internal * dim ..][0..dim];
+                    topk.offer(.{
+                        .id = index.payloads.items[internal].id,
+                        .score = qj.rotation.dot(ctx.rotated_query, original),
+                    });
+                }
+                count = topk.sortDescending();
+            } else {
+                var topk = qj.heap.TopK.fromBuffer(&out);
+                for (candidates) |candidate| {
+                    const payload = &index.payloads.items[@intCast(candidate.id)];
+                    topk.offer(.{ .id = payload.id, .score = payload.scoreLut(ctx.score_lut, query_sum) });
+                }
+                count = topk.sortDescending();
             }
-            const count = topk.sortDescending();
             score_ns += timer.read();
             for (out[0..count]) |r| sink += r.score;
         }
@@ -252,12 +275,14 @@ fn printMemory(comptime Idx: type, index: *const Idx, n: usize) void {
         graph_bytes += layer.nodes.items.len * @sizeOf(Idx.Graph.Node);
         graph_bytes += layer.bit_vectors.items.len * @sizeOf(Idx.Graph.BitVec);
     }
+    const originals_bytes = index.originals.items.len * @sizeOf(f32);
     const raw_bytes = n * Idx.dimension * @sizeOf(f32);
     std.debug.print(
-        "memory: payloads {d:.1} MiB + graph {d:.1} MiB vs raw fp32 {d:.1} MiB ({d:.1}x payload compression)\n",
+        "memory: payloads {d:.1} MiB + graph {d:.1} MiB + fp32 originals {d:.1} MiB vs raw fp32 {d:.1} MiB ({d:.1}x payload compression)\n",
         .{
             @as(f64, @floatFromInt(payload_bytes)) / (1 << 20),
             @as(f64, @floatFromInt(graph_bytes)) / (1 << 20),
+            @as(f64, @floatFromInt(originals_bytes)) / (1 << 20),
             @as(f64, @floatFromInt(raw_bytes)) / (1 << 20),
             @as(f64, @floatFromInt(raw_bytes)) / @as(f64, @floatFromInt(payload_bytes)),
         },
@@ -422,6 +447,8 @@ fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args) !Config {
             config.normalize = false;
         } else if (std.mem.eql(u8, arg, "--asymmetric")) {
             config.symmetric = false;
+        } else if (std.mem.eql(u8, arg, "--no-exact")) {
+            config.exact_rerank = false;
         } else if (std.mem.eql(u8, arg, "--profile")) {
             config.profile = true;
         } else if (std.mem.eql(u8, arg, "--query-file")) {
