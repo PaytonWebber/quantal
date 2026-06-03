@@ -76,14 +76,32 @@ pub fn TurboQuantPayload(comptime dim: usize) type {
         /// the original vector at exactly its squared norm:
         ///   renorm = ||v||^2 / <v, v_hat>
         pub fn encode(id: u64, coords: []const f32) Self {
+            return encodeWithCalibration(id, coords, &.{}, &.{});
+        }
+
+        /// TQ+ variant: coordinates are standardized per coordinate before
+        /// the per-vector calibration and quantization, but the stored
+        /// renormalization keeps the estimator unbiased in the ORIGINAL
+        /// rotated space — reconstruction decodes through the inverse
+        /// affine: y_hat_j = (c[code]*s_v + m_v)*calib_scale_j + calib_shift_j.
+        /// Empty calibration slices mean identity.
+        pub fn encodeWithCalibration(
+            id: u64,
+            coords: []const f32,
+            calib_shift: []const f32,
+            calib_scale: []const f32,
+        ) Self {
             std.debug.assert(coords.len == dim);
+            const calibrated = calib_shift.len == dim;
+            std.debug.assert(calibrated or calib_shift.len == 0);
             const dim_f: f64 = @floatFromInt(dim);
 
             var sum: f64 = 0;
             var sum_sq: f64 = 0;
-            for (coords) |x| {
-                sum += x;
-                sum_sq += @as(f64, x) * x;
+            for (coords, 0..) |x, j| {
+                const y: f64 = if (calibrated) (x - calib_shift[j]) / calib_scale[j] else x;
+                sum += y;
+                sum_sq += y * y;
             }
             const mean = sum / dim_f;
             const variance = @max(0.0, sum_sq / dim_f - mean * mean);
@@ -98,7 +116,7 @@ pub fn TurboQuantPayload(comptime dim: usize) type {
                 .renorm_scalar = 1.0,
             };
 
-            var inner: f64 = 0; // <v, v_hat>
+            var inner: f64 = 0; // <v, v_hat>, both in original rotated space
             var norm_sq: f64 = 0; // ||v||^2
             var j: usize = 0;
             for (&self.chunks) |*chunk| {
@@ -106,8 +124,10 @@ pub fn TurboQuantPayload(comptime dim: usize) type {
                 for (&codes) |*code| {
                     if (j >= dim) break;
                     const x = coords[j];
-                    code.* = quantizeCoord((x - shift) / scale);
-                    const reconstructed = lloyd_max_centroids[code.*] * scale + shift;
+                    const y: f32 = if (calibrated) (x - calib_shift[j]) / calib_scale[j] else x;
+                    code.* = quantizeCoord((y - shift) / scale);
+                    var reconstructed = lloyd_max_centroids[code.*] * scale + shift;
+                    if (calibrated) reconstructed = reconstructed * calib_scale[j] + calib_shift[j];
                     inner += @as(f64, x) * reconstructed;
                     norm_sq += @as(f64, x) * x;
                     j += 1;
@@ -139,8 +159,11 @@ pub fn TurboQuantPayload(comptime dim: usize) type {
         /// table (see `buildScoreLut`). Algebraically identical to `score`:
         ///   sum q_j * (c[code_j]*scale + shift)
         ///     = scale * sum q_j*c[code_j] + shift * sum q_j
-        /// but needs only one table-add per coordinate.
-        pub fn scoreLut(self: *const Self, lut: []const f32, query_sum: f32) f32 {
+        /// but needs only one table-add per coordinate. `a`/`b` are the
+        /// query constants returned by the LUT builder; with per-coordinate
+        /// (TQ+) calibration they fold the inverse affine into the same
+        /// kernel, so the estimate stays in the original rotated space.
+        pub fn scoreLut(self: *const Self, lut: []const f32, a: f32, b: f32) f32 {
             std.debug.assert(lut.len == dim * 8);
             var acc: f32 = 0;
             var j: usize = 0;
@@ -154,7 +177,7 @@ pub fn TurboQuantPayload(comptime dim: usize) type {
                     j += 1;
                 }
             }
-            return (self.bias_scale * acc + self.bias_shift * query_sum) * self.renorm_scalar;
+            return (self.bias_scale * acc + self.bias_shift * a + b) * self.renorm_scalar;
         }
 
         /// Unbiased inner-product estimate against an already-decoded query.
@@ -199,9 +222,11 @@ pub fn quantizeQuery(query: []const f32, out: []f32) void {
     }
 }
 
-/// Fills `lut[j*8 + k] = query[j] * centroid[k]` and returns sum(query),
-/// the two precomputed pieces `scoreLut` needs.
-pub fn buildScoreLut(query: []const f32, lut: []f32) f32 {
+pub const LutConstants = struct { a: f32, b: f32 };
+
+/// Fills `lut[j*8 + k] = query[j] * centroid[k]` and returns the query
+/// constants `scoreLut` needs (a = sum(q), b = 0).
+pub fn buildScoreLut(query: []const f32, lut: []f32) LutConstants {
     std.debug.assert(lut.len == query.len * 8);
     const centroids: @Vector(8, f32) = lloyd_max_centroids;
     var sum: f32 = 0;
@@ -209,7 +234,30 @@ pub fn buildScoreLut(query: []const f32, lut: []f32) f32 {
         lut[j * 8 ..][0..8].* = centroids * @as(@Vector(8, f32), @splat(q));
         sum += q;
     }
-    return sum;
+    return .{ .a = sum, .b = 0 };
+}
+
+/// TQ+ variant: folds the per-coordinate inverse affine into the table so
+/// `scoreLut` estimates the inner product in the original rotated space:
+///   lut[j][k] = q_j * calib_scale_j * c[k]
+///   a = sum(q_j * calib_scale_j), b = sum(q_j * calib_shift_j)
+pub fn buildScoreLutCalibrated(
+    query: []const f32,
+    calib_shift: []const f32,
+    calib_scale: []const f32,
+    lut: []f32,
+) LutConstants {
+    std.debug.assert(lut.len == query.len * 8);
+    std.debug.assert(calib_shift.len == query.len and calib_scale.len == query.len);
+    const centroids: @Vector(8, f32) = lloyd_max_centroids;
+    var a: f32 = 0;
+    var b: f32 = 0;
+    for (query, calib_shift, calib_scale, 0..) |q, sh, sc, j| {
+        lut[j * 8 ..][0..8].* = centroids * @as(@Vector(8, f32), @splat(q * sc));
+        a += q * sc;
+        b += q * sh;
+    }
+    return .{ .a = a, .b = b };
 }
 
 test "quantizeCoord picks nearest centroid at boundaries" {
@@ -289,11 +337,59 @@ test "scoreLut matches the direct scoring kernel" {
 
     const payload = TurboQuantPayload(dim).encode(3, &coords);
     var lut: [dim * 8]f32 = undefined;
-    const query_sum = buildScoreLut(&query, &lut);
+    const consts = buildScoreLut(&query, &lut);
 
     try std.testing.expectApproxEqRel(
         payload.score(&query),
-        payload.scoreLut(&lut, query_sum),
+        payload.scoreLut(&lut, consts.a, consts.b),
+        1e-4,
+    );
+}
+
+test "calibrated encode + LUT estimates the raw-space inner product" {
+    const dim = 64;
+    var prng = std.Random.DefaultPrng.init(57);
+    const rand = prng.random();
+
+    // Skewed per-coordinate distribution the calibration should absorb.
+    var calib_shift: [dim]f32 = undefined;
+    var calib_scale: [dim]f32 = undefined;
+    for (&calib_shift, &calib_scale, 0..) |*sh, *sc, j| {
+        sh.* = 0.3 * @as(f32, @floatFromInt(j % 5));
+        sc.* = 0.5 + 0.1 * @as(f32, @floatFromInt(j % 7));
+    }
+
+    var coords: [dim]f32 = undefined;
+    var query: [dim]f32 = undefined;
+    for (&coords, calib_shift, calib_scale) |*c, sh, sc| {
+        c.* = rand.floatNorm(f32) * sc + sh;
+    }
+    // Correlate the query with the stored vector so the exact inner product
+    // is large relative to the quantizer noise (a near-orthogonal pair would
+    // make any relative tolerance meaningless).
+    for (&query, coords) |*q, c| q.* = c + 0.3 * rand.floatNorm(f32);
+
+    const payload = TurboQuantPayload(dim).encodeWithCalibration(1, &coords, &calib_shift, &calib_scale);
+    var lut: [dim * 8]f32 = undefined;
+    const consts = buildScoreLutCalibrated(&query, &calib_shift, &calib_scale, &lut);
+    const estimate = payload.scoreLut(&lut, consts.a, consts.b);
+
+    var exact: f64 = 0;
+    for (coords, query) |x, q| exact += @as(f64, x) * q;
+
+    // 3-bit estimate of the raw-space inner product: loose tolerance, but it
+    // must be in the right space and ballpark (the broken all-calibrated
+    // variant was off by the affine transform entirely).
+    try std.testing.expectApproxEqRel(exact, @as(f64, estimate), 0.05);
+
+    // And the self-estimate must renormalize to the exact squared norm.
+    var lut_self: [dim * 8]f32 = undefined;
+    const self_consts = buildScoreLutCalibrated(&coords, &calib_shift, &calib_scale, &lut_self);
+    var norm_sq: f64 = 0;
+    for (coords) |x| norm_sq += @as(f64, x) * x;
+    try std.testing.expectApproxEqRel(
+        norm_sq,
+        @as(f64, payload.scoreLut(&lut_self, self_consts.a, self_consts.b)),
         1e-4,
     );
 }

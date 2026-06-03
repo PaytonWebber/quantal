@@ -37,7 +37,8 @@ const Config = struct {
     stage1_widths: []const usize = &default_stage1_widths,
     symmetric: bool = true,
     profile: bool = false,
-    exact_rerank: bool = true,
+    rerank_mode: qj.index.RerankStore = .sq8,
+    tq_plus: bool = false,
     /// turbovec/paper-style report: recall1@k for k in 1..64.
     recall_curve: bool = false,
 };
@@ -100,10 +101,12 @@ fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, datas
     var timer = Stopwatch.begin(io);
     var index = try Idx.init(allocator, config.ef_construction, config.seed);
     defer index.deinit(allocator);
-    index.store_originals = config.exact_rerank;
+    index.rerank_store = config.rerank_mode;
+    index.tq_plus = config.tq_plus;
     for (0..dataset.n) |i| {
         try index.add(allocator, i, dataset.base[i * dim ..][0..dim]);
     }
+    try index.freeze(allocator);
     const build_ns = timer.read();
     std.debug.print("build: {d:.2}s ({d:.0} vectors/s)\n", .{
         @as(f64, @floatFromInt(build_ns)) / 1e9,
@@ -251,7 +254,7 @@ fn profilePhases(comptime Idx: type, io: std.Io, index: *const Idx, dataset: *co
             } else {
                 @memcpy(ctx.decoded_query, ctx.rotated_query);
             }
-            const query_sum = qj.turboquant.buildScoreLut(ctx.decoded_query, ctx.score_lut);
+            const consts = qj.turboquant.buildScoreLut(ctx.decoded_query, ctx.score_lut);
             prep_ns += timer.read();
 
             timer.reset();
@@ -260,21 +263,20 @@ fn profilePhases(comptime Idx: type, io: std.Io, index: *const Idx, dataset: *co
 
             timer.reset();
             var count: usize = 0;
-            if (index.hasOriginals()) {
+            if (index.hasRerankStore()) {
                 const pool_size = @min(ctx.rerank_factor * out.len, ctx.rerank_pool.len);
                 var pool = qj.heap.TopK.fromBuffer(ctx.rerank_pool[0..pool_size]);
                 for (candidates) |candidate| {
                     const payload = &index.payloads.items[@intCast(candidate.id)];
-                    pool.offer(.{ .id = candidate.id, .score = payload.scoreLut(ctx.score_lut, query_sum) });
+                    pool.offer(.{ .id = candidate.id, .score = payload.scoreLut(ctx.score_lut, consts.a, consts.b) });
                 }
                 const pooled = pool.sortDescending();
                 var topk = qj.heap.TopK.fromBuffer(&out);
                 for (ctx.rerank_pool[0..pooled]) |entry| {
                     const internal: usize = @intCast(entry.id);
-                    const original = index.originals.items[internal * dim ..][0..dim];
                     topk.offer(.{
                         .id = index.payloads.items[internal].id,
-                        .score = qj.rotation.dot(ctx.rotated_query, original),
+                        .score = index.rerankScore(internal, ctx.rotated_query),
                     });
                 }
                 count = topk.sortDescending();
@@ -282,7 +284,7 @@ fn profilePhases(comptime Idx: type, io: std.Io, index: *const Idx, dataset: *co
                 var topk = qj.heap.TopK.fromBuffer(&out);
                 for (candidates) |candidate| {
                     const payload = &index.payloads.items[@intCast(candidate.id)];
-                    topk.offer(.{ .id = payload.id, .score = payload.scoreLut(ctx.score_lut, query_sum) });
+                    topk.offer(.{ .id = payload.id, .score = payload.scoreLut(ctx.score_lut, consts.a, consts.b) });
                 }
                 count = topk.sortDescending();
             }
@@ -331,16 +333,17 @@ fn printMemory(comptime Idx: type, index: *const Idx, n: usize) void {
         graph_bytes += layer.nodes.items.len * @sizeOf(Idx.Graph.Node);
         graph_bytes += layer.bit_vectors.items.len * @sizeOf(Idx.Graph.BitVec);
     }
-    const originals_bytes = index.originals.items.len * @sizeOf(f32);
+    const rerank_bytes = index.originals.items.len * @sizeOf(f32) +
+        index.sq8_codes.items.len + index.sq8_scales.items.len * @sizeOf(f32);
     const raw_bytes = n * Idx.dimension * @sizeOf(f32);
     std.debug.print(
-        "memory: payloads {d:.1} MiB + graph {d:.1} MiB + fp32 originals {d:.1} MiB vs raw fp32 {d:.1} MiB ({d:.1}x payload compression)\n",
+        "memory: payloads {d:.1} MiB + graph {d:.1} MiB + rerank store ({s}) {d:.1} MiB vs raw fp32 {d:.1} MiB\n",
         .{
             @as(f64, @floatFromInt(payload_bytes)) / (1 << 20),
             @as(f64, @floatFromInt(graph_bytes)) / (1 << 20),
-            @as(f64, @floatFromInt(originals_bytes)) / (1 << 20),
+            @tagName(index.rerank_store),
+            @as(f64, @floatFromInt(rerank_bytes)) / (1 << 20),
             @as(f64, @floatFromInt(raw_bytes)) / (1 << 20),
-            @as(f64, @floatFromInt(raw_bytes)) / @as(f64, @floatFromInt(payload_bytes)),
         },
     );
 }
@@ -504,7 +507,11 @@ fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args) !Config {
         } else if (std.mem.eql(u8, arg, "--asymmetric")) {
             config.symmetric = false;
         } else if (std.mem.eql(u8, arg, "--no-exact")) {
-            config.exact_rerank = false;
+            config.rerank_mode = .none;
+        } else if (std.mem.eql(u8, arg, "--rerank")) {
+            config.rerank_mode = std.meta.stringToEnum(qj.index.RerankStore, nextArg(argv, &i)) orelse usage();
+        } else if (std.mem.eql(u8, arg, "--tq-plus")) {
+            config.tq_plus = true;
         } else if (std.mem.eql(u8, arg, "--recall-curve")) {
             config.recall_curve = true;
         } else if (std.mem.eql(u8, arg, "--profile")) {
@@ -552,7 +559,8 @@ fn usage() noreturn {
         \\  qj-bench glove <vectors.txt> [--max-base 100000] [--queries 1000]
         \\
         \\common flags: --ef <n> (default 200), --seed <n>, --no-normalize,
-        \\              --m <w1,w2,...> stage-1 beam widths (default 16,32,64,128)
+        \\              --m <w1,w2,...> stage-1 beam widths (default 16,32,64,128),
+        \\              --rerank <sq8|fp32|none> (default sq8), --recall-curve
         \\
     , .{});
     std.process.exit(1);

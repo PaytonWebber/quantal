@@ -42,8 +42,37 @@
 | Recall1@k convergence guarantee | exhaustive scan, unconditional | requires the true NN to be routed into the beam |
 
 Notes:
-- quantajump's memory is dominated by the fp32 stage-3 rerank store; an SQ8 store
-  (int8) cuts it to ~222 MiB at negligible recall cost, and `store_originals=false`
-  drops it to 129 MiB (recall then capped by 3-bit scoring, like turbovec is by 4-bit).
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;
   quantajump evaluates ~1–3% and grows ~logarithmically.
+
+## SQ8 rerank store (now the default)
+
+int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:
+
+| store | DBpedia-1536 R@1 (m=128 / 512) | rerank store size | total resident |
+|---|---|---|---|
+| fp32 | 0.970 / 0.995 | 586 MiB | 715 MiB |
+| **sq8** | 0.966 / 0.991 | **147 MiB** | **276 MiB** |
+| none | capped by 3-bit scoring | 0 | 129 MiB |
+
+~0.4pp recall for a 4x smaller rerank store; quantajump's total memory premium over
+turbovec 4-bit (75.5 MiB) drops to ~3.7x — the price of +3pp recall at 2-5x lower
+latency.
+
+## TQ+ per-coordinate calibration: measured, kept opt-in, no gain
+
+Implemented per-coordinate shift/scale calibration (fit on the first 1000 adds,
+frozen, decoded through the inverse affine inside the LUT kernel so scoring stays
+in raw rotated space). Findings on GloVe-100/100k, the drift-prone case turbovec
+cites (+1.4pp at 2-bit for their quantile variant):
+
+- With stage-3 exact rerank: recall identical to baseline (stage 3 already erases
+  stage-2 precision differences; stage 2 only selects the rerank pool).
+- Without rerank (`--rerank none`): 1@1 0.658 -> 0.627 — slightly negative; our
+  per-vector mean/std calibration already adapts to drift, leaving nothing for the
+  per-coordinate fit to reclaim at 3-bit.
+- Calibrating the 1-bit routing signs is decisively harmful (1@1 0.739 -> 0.544):
+  centering strips the shared mean component that raw-cosine ranking weights, so
+  routing bits stay raw by design.
+
+`--tq-plus` remains available and serialized, default off.

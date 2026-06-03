@@ -123,21 +123,23 @@ fn runQuery(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, confi
         graph_bytes += layer.nodes.items.len * @sizeOf(Idx.Graph.Node);
         graph_bytes += layer.bit_vectors.items.len * @sizeOf(Idx.Graph.BitVec);
     }
-    const originals_bytes = index.originals.items.len * @sizeOf(f32);
+    const rerank_bytes = index.originals.items.len * @sizeOf(f32) +
+        index.sq8_codes.items.len + index.sq8_scales.items.len * @sizeOf(f32);
     std.debug.print(
         \\[qj-route] loaded {s} vectors (dim {d}) in {d:.1}s from {s}
-        \\[qj-route] resident index: {d:.1} MiB ({d:.1} MiB 3-bit payloads + {d:.1} MiB 1-bit graph mesh + {d:.1} MiB fp32 rerank store)
+        \\[qj-route] resident index: {d:.1} MiB ({d:.1} MiB 3-bit payloads + {d:.1} MiB 1-bit graph mesh + {d:.1} MiB {s} rerank store)
         \\[qj-route] stage-1 beam width m={d}, scoring: {s}{s}; type a query, or "exit"
         \\
         \\
     , .{
         fmtComma(index.len()),         dim,
         load_s,                        config.index_path,
-        mib(payload_bytes + graph_bytes + originals_bytes + loaded.label_blob.len), mib(payload_bytes),
-        mib(graph_bytes),              mib(originals_bytes),
+        mib(payload_bytes + graph_bytes + rerank_bytes + loaded.label_blob.len), mib(payload_bytes),
+        mib(graph_bytes),              mib(rerank_bytes),
+        @tagName(index.rerank_store),
         config.m,
         if (config.symmetric) "symmetric 3-bit" else "asymmetric (fp32 query)",
-        if (index.hasOriginals()) " + exact fp32 rerank" else "",
+        if (index.hasRerankStore()) " + exact rerank" else "",
     });
 
     var ctx = try Idx.SearchContext.init(allocator, index, config.m);
@@ -251,10 +253,10 @@ fn runOneQuery(
         "[3-bit rerank] rescored {d} candidates via LUT kernel\n",
         .{@min(ctx.m, index.len())},
     );
-    if (index.hasOriginals()) {
+    if (index.hasRerankStore()) {
         std.debug.print(
-            "[fp32 rerank]  exactly rescored top {d} -> final top {d}\n",
-            .{ @min(ctx.rerank_factor * out.len, ctx.rerank_pool.len), fetched },
+            "[{s} rerank]  exactly rescored top {d} -> final top {d}\n",
+            .{ @tagName(index.rerank_store), @min(ctx.rerank_factor * out.len, ctx.rerank_pool.len), fetched },
         );
     }
 

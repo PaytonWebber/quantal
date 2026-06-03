@@ -1,21 +1,25 @@
 //! .tq index file format: a serialized Index plus one text label per vector.
 //!
 //! Little-endian throughout. Layout:
-//!   magic "TQX2"
+//!   magic "TQX3"
 //!   u32 dim, u32 max_edges, u64 vector_count
-//!   u64 ef_construction, u64 entry_id, u32 layer_count, u8 has_originals
+//!   u64 ef_construction, u64 entry_id, u32 layer_count, u8 rerank_store
+//!   u8 calib_frozen; when set: dim f32 shifts, dim f32 scales (TQ+)
 //!   rotation matrix: dim*dim f32
 //!   payloads, each: u64 id, chunks_count * 3 bytes (true 3-byte TQ3 packing),
 //!                   f32 bias_scale, f32 bias_shift, f32 renorm_scalar
-//!   originals (when has_originals): vector_count * dim f32 (rotated space)
+//!   rerank store (rotated space):
+//!     fp32: vector_count * dim f32
+//!     sq8:  vector_count * dim i8, then vector_count f32 scales
 //!   layers, each: u64 node_count, then nodes:
 //!                   u64 id, words_count * u64 bit vector,
 //!                   u32 edge_count, edge_count * u64 neighbors
 //!   labels, each: u16 length + bytes
 
 const std = @import("std");
+const index_type = @import("index.zig");
 
-const magic = "TQX2";
+const magic = "TQX3";
 
 pub const Header = struct {
     dim: u32,
@@ -98,7 +102,14 @@ pub fn serialize(
     try w.int(u64, index.routing.ef_construction);
     try w.int(u64, index.routing.entry_id);
     try w.int(u32, @intCast(index.routing.layers.items.len));
-    try w.int(u8, @intFromBool(index.hasOriginals()));
+    try w.int(u8, if (index.hasRerankStore()) @intFromEnum(index.rerank_store) else 0);
+
+    std.debug.assert(index.pending_ids.items.len == 0); // freeze() before save
+    try w.int(u8, @intFromBool(index.calib_frozen));
+    if (index.calib_frozen) {
+        try w.raw(std.mem.sliceAsBytes(index.calib_shift));
+        try w.raw(std.mem.sliceAsBytes(index.calib_scale));
+    }
 
     try w.raw(std.mem.sliceAsBytes(index.rotation.rows));
 
@@ -114,8 +125,15 @@ pub fn serialize(
         try w.float(payload.renorm_scalar);
     }
 
-    if (index.hasOriginals()) {
-        try w.raw(std.mem.sliceAsBytes(index.originals.items));
+    if (index.hasRerankStore()) {
+        switch (index.rerank_store) {
+            .none => {},
+            .fp32 => try w.raw(std.mem.sliceAsBytes(index.originals.items)),
+            .sq8 => {
+                try w.raw(std.mem.sliceAsBytes(index.sq8_codes.items));
+                try w.raw(std.mem.sliceAsBytes(index.sq8_scales.items));
+            },
+        }
     }
 
     for (index.routing.layers.items) |layer| {
@@ -153,7 +171,21 @@ pub fn deserialize(
     const ef_construction = try r.int(u64);
     const entry_id = try r.int(u64);
     const layer_count = try r.int(u32);
-    const has_originals = (try r.int(u8)) != 0;
+    const rerank_store = std.enums.fromInt(index_type.RerankStore, try r.int(u8)) orelse {
+        return error.CorruptIndex;
+    };
+
+    const calib_frozen = (try r.int(u8)) != 0;
+    var calib_shift: []f32 = &.{};
+    var calib_scale: []f32 = &.{};
+    errdefer allocator.free(calib_shift);
+    errdefer allocator.free(calib_scale);
+    if (calib_frozen) {
+        calib_shift = try allocator.alloc(f32, dim);
+        @memcpy(std.mem.sliceAsBytes(calib_shift), try r.raw(dim * 4));
+        calib_scale = try allocator.alloc(f32, dim);
+        @memcpy(std.mem.sliceAsBytes(calib_scale), try r.raw(dim * 4));
+    }
 
     const rotation_rows = try allocator.alloc(f32, dim * dim);
     errdefer allocator.free(rotation_rows);
@@ -163,10 +195,17 @@ pub fn deserialize(
         .rotation = .{ .rows = rotation_rows },
         .routing = Idx.Graph.init(ef_construction),
         .rotate_buf = try allocator.alloc(f32, dim),
+        .calib_buf = try allocator.alloc(f32, dim),
+        .tq_plus = calib_frozen,
+        .calib_frozen = calib_frozen,
+        .calib_shift = calib_shift,
+        .calib_scale = calib_scale,
     };
     errdefer index.payloads.deinit(allocator);
     errdefer index.routing.deinit(allocator);
     errdefer index.originals.deinit(allocator);
+    errdefer index.sq8_codes.deinit(allocator);
+    errdefer index.sq8_scales.deinit(allocator);
     errdefer allocator.free(index.rotate_buf);
 
     try index.payloads.ensureTotalCapacityPrecise(allocator, @intCast(vector_count));
@@ -182,12 +221,24 @@ pub fn deserialize(
         index.payloads.appendAssumeCapacity(payload);
     }
 
-    index.store_originals = has_originals;
-    if (has_originals) {
-        const float_count: usize = @intCast(vector_count * dim);
-        try index.originals.ensureTotalCapacityPrecise(allocator, float_count);
-        index.originals.items.len = float_count;
-        @memcpy(std.mem.sliceAsBytes(index.originals.items), try r.raw(float_count * 4));
+    index.rerank_store = rerank_store;
+    const coord_count: usize = @intCast(vector_count * dim);
+    switch (rerank_store) {
+        .none => {},
+        .fp32 => {
+            try index.originals.ensureTotalCapacityPrecise(allocator, coord_count);
+            index.originals.items.len = coord_count;
+            @memcpy(std.mem.sliceAsBytes(index.originals.items), try r.raw(coord_count * 4));
+        },
+        .sq8 => {
+            try index.sq8_codes.ensureTotalCapacityPrecise(allocator, coord_count);
+            index.sq8_codes.items.len = coord_count;
+            @memcpy(std.mem.sliceAsBytes(index.sq8_codes.items), try r.raw(coord_count));
+            const n: usize = @intCast(vector_count);
+            try index.sq8_scales.ensureTotalCapacityPrecise(allocator, n);
+            index.sq8_scales.items.len = n;
+            @memcpy(std.mem.sliceAsBytes(index.sq8_scales.items), try r.raw(n * 4));
+        },
     }
 
     for (0..layer_count) |layer_idx| {
@@ -282,6 +333,7 @@ test "serialize/deserialize roundtrip preserves search results" {
 
     var original = try Idx.init(allocator, 16, 7);
     defer original.deinit(allocator);
+    original.tq_plus = true; // also exercises calibration serialization
 
     var prng = std.Random.DefaultPrng.init(99);
     const rand = prng.random();
@@ -293,6 +345,7 @@ test "serialize/deserialize roundtrip preserves search results" {
         try original.add(allocator, i, &coords);
         labels[i] = std.fmt.bufPrint(&label_buf[i], "word{d}", .{i}) catch unreachable;
     }
+    try original.freeze(allocator);
 
     const bytes = try serialize(Idx, allocator, &original, &labels);
     defer allocator.free(bytes);
