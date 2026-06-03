@@ -56,7 +56,7 @@ serial build (GloVe 0.746/0.884 vs 0.739/0.883).
 | Resident memory | **75.5 MiB** (4-bit, no originals) | 276 MiB with sq8 (75.5 payloads + 54 graph + 147 sq8 store) |
 | recall1@k tail | →1.0 by k=4 (exhaustive) | plateaus at routing recall (raise m to push it) |
 | Recall1@k convergence guarantee | exhaustive scan, unconditional | requires the true NN to be routed into the beam |
-| Maturity | PyPI/crates releases, deletes, filters, integrations | research-grade Zig library + C ABI |
+| Maturity | PyPI/crates releases, framework integrations | Zig library + C ABI + ctypes Python wrapper; deletes, allowlist filtering, save/load — no packaged releases yet |
 
 Notes:
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;

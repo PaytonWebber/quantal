@@ -59,6 +59,13 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
         /// int8 codes + one max-abs scale per vector (rerank_store == .sq8).
         sq8_codes: std.ArrayList(i8) = .empty,
         sq8_scales: std.ArrayList(f32) = .empty,
+        /// User id -> internal index; backs `remove` and filtered search.
+        id_to_internal: std.AutoHashMapUnmanaged(u64, u64) = .empty,
+        /// Tombstoned internals (lazy: empty until the first remove). The
+        /// graph keeps routing through deleted nodes; they are only skipped
+        /// at scoring time.
+        tombstones: std.DynamicBitSetUnmanaged = .{},
+        live_count: usize = 0,
 
         pub fn init(allocator: std.mem.Allocator, ef_construction: usize, seed: u64) !Self {
             var rot = try Rotation.init(allocator, seed);
@@ -87,11 +94,37 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             self.pending_ids.deinit(allocator);
             allocator.free(self.calib_buf);
             allocator.free(self.rotate_buf);
+            self.id_to_internal.deinit(allocator);
+            self.tombstones.deinit(allocator);
             self.* = undefined;
         }
 
+        /// Number of live (non-deleted) vectors.
         pub fn len(self: *const Self) usize {
+            return self.live_count;
+        }
+
+        /// Number of internal slots, including tombstoned ones (graph nodes
+        /// and payload records are never compacted in place).
+        pub fn capacity(self: *const Self) usize {
             return self.payloads.items.len;
+        }
+
+        pub fn isDeleted(self: *const Self, internal: usize) bool {
+            return internal < self.tombstones.bit_length and self.tombstones.isSet(internal);
+        }
+
+        /// Tombstones a vector by user id in O(1). Returns false when the
+        /// id is unknown (or already removed).
+        pub fn remove(self: *Self, allocator: std.mem.Allocator, id: u64) !bool {
+            const entry = self.id_to_internal.fetchRemove(id) orelse return false;
+            const internal: usize = @intCast(entry.value);
+            if (internal >= self.tombstones.bit_length) {
+                try self.tombstones.resize(allocator, self.payloads.items.len, false);
+            }
+            self.tombstones.set(internal);
+            self.live_count -= 1;
+            return true;
         }
 
         pub fn add(self: *Self, allocator: std.mem.Allocator, id: u64, coords: []const f32) !void {
@@ -184,6 +217,14 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
 
             const bits = Graph.BitVec.fromF32(rotated);
             try self.routing.insert(allocator, internal_id, bits);
+            try self.registerId(allocator, id, internal_id);
+        }
+
+        fn registerId(self: *Self, allocator: std.mem.Allocator, user_id: u64, internal: u64) !void {
+            const gop = try self.id_to_internal.getOrPut(allocator, user_id);
+            if (gop.found_existing) return error.DuplicateId;
+            gop.value_ptr.* = internal;
+            self.live_count += 1;
         }
 
         fn appendRerankRecord(self: *Self, allocator: std.mem.Allocator, rotated: []const f32) !void {
@@ -310,6 +351,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                     } else {
                         try self.routing.insertWithLevel(allocator, internal_id, staged.bits[i], staged.levels[i]);
                     }
+                    try self.registerId(allocator, ids[next + i], internal_id);
                 }
                 next += batch;
             }
@@ -422,7 +464,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 errdefer allocator.free(ctx.decoded_query);
                 errdefer allocator.free(ctx.score_lut);
                 errdefer allocator.free(ctx.rerank_pool);
-                try ctx.scratch.ensureCapacity(allocator, @max(index.len(), 1), m);
+                try ctx.scratch.ensureCapacity(allocator, @max(index.capacity(), 1), m);
                 return ctx;
             }
 
@@ -455,7 +497,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             std.debug.assert(rotated.len == dim);
             std.debug.assert(!self.tq_plus or self.calib_frozen); // freeze() after ingest
             if (self.len() == 0 or out.len == 0) return 0;
-            std.debug.assert(ctx.scratch.visited.bit_length >= self.len());
+            std.debug.assert(ctx.scratch.visited.bit_length >= self.capacity());
 
             // Routing bits are raw-space on both sides (see insertRotated);
             // stage-2 LUT scoring and stage 3 also estimate inner products
@@ -477,6 +519,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             if (!self.hasRerankStore()) {
                 var topk = heap_mod.TopK.fromBuffer(out);
                 for (candidates) |candidate| {
+                    if (self.isDeleted(@intCast(candidate.id))) continue;
                     const payload = &self.payloads.items[@intCast(candidate.id)];
                     topk.offer(.{
                         .id = payload.id,
@@ -491,6 +534,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             const pool_size = @min(@max(ctx.rerank_factor * out.len, out.len), ctx.rerank_pool.len);
             var pool = heap_mod.TopK.fromBuffer(ctx.rerank_pool[0..pool_size]);
             for (candidates) |candidate| {
+                if (self.isDeleted(@intCast(candidate.id))) continue;
                 const payload = &self.payloads.items[@intCast(candidate.id)];
                 pool.offer(.{
                     .id = candidate.id,
@@ -506,6 +550,53 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 topk.offer(.{
                     .id = self.payloads.items[internal].id,
                     .score = self.rerankScore(internal, rotated),
+                });
+            }
+            return topk.sortDescending();
+        }
+
+        /// Restricts results to an allowlist of user ids (e.g. produced by
+        /// an external SQL/BM25/ACL stage). Scores every allowed vector
+        /// directly — exact for any rerank store, no routing recall loss,
+        /// O(|allowlist| * dim) — which beats graph traversal for the
+        /// selective filters allowlists are used for. Unknown and removed
+        /// ids are skipped. Allocation-free.
+        pub fn searchFiltered(
+            self: *const Self,
+            ctx: *SearchContext,
+            query: []const f32,
+            allowed_ids: []const u64,
+            out: []SearchResult,
+        ) usize {
+            std.debug.assert(query.len == dim);
+            std.debug.assert(!self.tq_plus or self.calib_frozen);
+            if (out.len == 0) return 0;
+            self.rotation.apply(query, ctx.rotated_query);
+
+            // LUT only needed when there is no exact store to score with.
+            var consts: turboquant.LutConstants = .{ .a = 0, .b = 0 };
+            const exact = self.hasRerankStore();
+            if (!exact) {
+                if (ctx.symmetric) {
+                    turboquant.quantizeQuery(ctx.rotated_query, ctx.decoded_query);
+                } else {
+                    @memcpy(ctx.decoded_query, ctx.rotated_query);
+                }
+                consts = if (self.calib_frozen)
+                    turboquant.buildScoreLutCalibrated(ctx.decoded_query, self.calib_shift, self.calib_scale, ctx.score_lut)
+                else
+                    turboquant.buildScoreLut(ctx.decoded_query, ctx.score_lut);
+            }
+
+            var topk = heap_mod.TopK.fromBuffer(out);
+            for (allowed_ids) |user_id| {
+                const internal: usize = @intCast(self.id_to_internal.get(user_id) orelse continue);
+                topk.offer(.{
+                    .id = user_id,
+                    .score = if (exact)
+                        self.rerankScore(internal, ctx.rotated_query)
+                    else
+                        self.payloads.items[internal].scoreLut(ctx.score_lut, consts.a, consts.b),
                 });
             }
             return topk.sortDescending();
@@ -760,6 +851,80 @@ test "tq_plus with fewer adds than the sample needs explicit freeze" {
     defer ctx.deinit(allocator);
     var out: [5]SearchResult = undefined;
     try std.testing.expectEqual(@as(usize, 5), index.search(&ctx, &coords, &out));
+}
+
+test "remove tombstones a vector and search skips it" {
+    const dim = 32;
+    const Idx = Index(dim, 8);
+    const allocator = std.testing.allocator;
+
+    var index = try Idx.init(allocator, 32, 19);
+    defer index.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(3);
+    const rand = prng.random();
+    var stored: [50][dim]f32 = undefined;
+    for (&stored, 0..) |*coords, i| {
+        for (coords) |*c| c.* = rand.floatNorm(f32);
+        try index.add(allocator, 100 + i, coords);
+    }
+    try std.testing.expectEqual(@as(usize, 50), index.len());
+
+    var ctx = try Idx.SearchContext.init(allocator, &index, 50);
+    defer ctx.deinit(allocator);
+    var out: [5]SearchResult = undefined;
+
+    // Self-query finds id 107, then removing it must hide it.
+    _ = index.search(&ctx, &stored[7], &out);
+    try std.testing.expectEqual(@as(u64, 107), out[0].id);
+
+    try std.testing.expect(try index.remove(allocator, 107));
+    try std.testing.expect(!try index.remove(allocator, 107)); // idempotent
+    try std.testing.expect(!try index.remove(allocator, 9999)); // unknown
+    try std.testing.expectEqual(@as(usize, 49), index.len());
+
+    const count = index.search(&ctx, &stored[7], &out);
+    for (out[0..count]) |result| {
+        try std.testing.expect(result.id != 107);
+    }
+}
+
+test "searchFiltered restricts results to the allowlist" {
+    const dim = 32;
+    const Idx = Index(dim, 8);
+    const allocator = std.testing.allocator;
+
+    var index = try Idx.init(allocator, 32, 29);
+    defer index.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(8);
+    const rand = prng.random();
+    var coords: [dim]f32 = undefined;
+    for (0..200) |i| {
+        for (&coords) |*c| c.* = rand.floatNorm(f32);
+        try index.add(allocator, i, &coords);
+    }
+
+    var ctx = try Idx.SearchContext.init(allocator, &index, 32);
+    defer ctx.deinit(allocator);
+
+    const allowlist = [_]u64{ 3, 17, 42, 99, 150, 7777 }; // 7777 unknown
+    var query: [dim]f32 = undefined;
+    for (&query) |*q| q.* = rand.floatNorm(f32);
+
+    var out: [10]SearchResult = undefined;
+    const count = index.searchFiltered(&ctx, &query, &allowlist, &out);
+    try std.testing.expectEqual(@as(usize, 5), count);
+    for (out[0..count]) |result| {
+        try std.testing.expect(std.mem.indexOfScalar(u64, &allowlist, result.id) != null);
+    }
+    for (out[0 .. count - 1], out[1..count]) |a, b| {
+        try std.testing.expect(a.score >= b.score);
+    }
+
+    // Removing an allowed id shrinks the result set.
+    try std.testing.expect(try index.remove(allocator, 42));
+    try std.testing.expectEqual(@as(usize, 4), index.searchFiltered(&ctx, &query, &allowlist, &out));
 }
 
 test "addBatch + searchBatch match serial quality" {

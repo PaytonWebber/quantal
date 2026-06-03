@@ -25,6 +25,22 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
+    // Shared library for FFI consumers (e.g. the Python ctypes wrapper).
+    // Links libc: std.Thread's libc-free spawn path requires Zig-controlled
+    // process startup, which a dlopen'd library never gets.
+    const shared = b.addLibrary(.{
+        .name = "quantajump",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shared_root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "quantajump", .module = mod }},
+        }),
+    });
+    b.installArtifact(shared);
+
     const bench_exe = b.addExecutable(.{
         .name = "qj-bench",
         .root_module = b.createModule(.{

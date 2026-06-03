@@ -1,7 +1,7 @@
 //! .tq index file format: a serialized Index plus one text label per vector.
 //!
 //! Little-endian throughout. Layout:
-//!   magic "TQX3"
+//!   magic "TQX4"
 //!   u32 dim, u32 max_edges, u64 vector_count
 //!   u64 ef_construction, u64 entry_id, u32 layer_count, u8 rerank_store
 //!   u8 calib_frozen; when set: dim f32 shifts, dim f32 scales (TQ+)
@@ -14,12 +14,13 @@
 //!   layers, each: u64 node_count, then nodes:
 //!                   u64 id, words_count * u64 bit vector,
 //!                   u32 edge_count, edge_count * u64 neighbors
+//!   tombstones: u64 count, then count u64 internal indices
 //!   labels, each: u16 length + bytes
 
 const std = @import("std");
 const index_type = @import("index.zig");
 
-const magic = "TQX3";
+const magic = "TQX4";
 
 pub const Header = struct {
     dim: u32,
@@ -89,7 +90,7 @@ pub fn serialize(
     labels: []const []const u8,
 ) ![]u8 {
     const dim = Idx.dimension;
-    std.debug.assert(labels.len == index.len());
+    std.debug.assert(labels.len == index.capacity());
 
     var bytes: std.ArrayList(u8) = .empty;
     errdefer bytes.deinit(allocator);
@@ -98,7 +99,7 @@ pub fn serialize(
     try w.raw(magic);
     try w.int(u32, dim);
     try w.int(u32, maxEdgesOf(Idx));
-    try w.int(u64, index.len());
+    try w.int(u64, index.capacity());
     try w.int(u64, index.routing.ef_construction);
     try w.int(u64, index.routing.entry_id);
     try w.int(u32, @intCast(index.routing.layers.items.len));
@@ -146,6 +147,14 @@ pub fn serialize(
                 try w.int(u64, neighbor_id);
             }
         }
+    }
+
+    var deleted_count: u64 = 0;
+    if (index.tombstones.bit_length > 0) deleted_count = index.tombstones.count();
+    try w.int(u64, deleted_count);
+    if (deleted_count > 0) {
+        var it = index.tombstones.iterator(.{});
+        while (it.next()) |internal| try w.int(u64, internal);
     }
 
     for (labels) |label| {
@@ -260,6 +269,22 @@ pub fn deserialize(
     index.routing.entry_id = entry_id;
     index.routing.node_count = @intCast(vector_count);
 
+    const deleted_count = try r.int(u64);
+    if (deleted_count > 0) {
+        try index.tombstones.resize(allocator, @intCast(vector_count), false);
+        for (0..@intCast(deleted_count)) |_| {
+            const internal = try r.int(u64);
+            if (internal >= vector_count) return error.CorruptIndex;
+            index.tombstones.set(@intCast(internal));
+        }
+    }
+    try index.id_to_internal.ensureTotalCapacity(allocator, @intCast(vector_count));
+    for (index.payloads.items, 0..) |payload, internal| {
+        if (index.isDeleted(internal)) continue;
+        index.id_to_internal.putAssumeCapacity(payload.id, @intCast(internal));
+        index.live_count += 1;
+    }
+
     const labels = try allocator.alloc([]const u8, @intCast(vector_count));
     errdefer allocator.free(labels);
     var blob: std.ArrayList(u8) = .empty;
@@ -346,6 +371,7 @@ test "serialize/deserialize roundtrip preserves search results" {
         labels[i] = std.fmt.bufPrint(&label_buf[i], "word{d}", .{i}) catch unreachable;
     }
     try original.freeze(allocator);
+    try std.testing.expect(try original.remove(allocator, 13));
 
     const bytes = try serialize(Idx, allocator, &original, &labels);
     defer allocator.free(bytes);
@@ -353,6 +379,7 @@ test "serialize/deserialize roundtrip preserves search results" {
     defer loaded.deinit(allocator);
 
     try std.testing.expectEqual(original.len(), loaded.index.len());
+    try std.testing.expect(loaded.index.isDeleted(13));
     try std.testing.expectEqualStrings("word7", loaded.labels[7]);
 
     // Identical query against both indexes must return identical results.

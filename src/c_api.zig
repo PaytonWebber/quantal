@@ -7,6 +7,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const index_mod = @import("index.zig");
+const storage = @import("storage.zig");
 
 pub const c_dim = build_options.c_dim;
 pub const c_max_edges = build_options.c_max_edges;
@@ -50,6 +51,42 @@ export fn qj_index_len(handle: *const Handle) usize {
     return handle.index.len();
 }
 
+/// Multi-threaded bulk ingest of n vectors (row-major coords, n*dim floats).
+export fn qj_index_add_batch(handle: *Handle, ids: [*]const u64, coords: [*]const f32, n: usize, threads: usize) i32 {
+    handle.index.addBatch(allocator, ids[0..n], coords[0 .. n * c_dim], threads) catch return -1;
+    return 0;
+}
+
+/// Tombstones a vector by id. Returns 0 on success, -1 when unknown.
+export fn qj_index_remove(handle: *Handle, id: u64) i32 {
+    const removed = handle.index.remove(allocator, id) catch return -1;
+    return if (removed) 0 else -1;
+}
+
+export fn qj_index_save(handle: *const Handle, path: [*:0]const u8) i32 {
+    const empty_labels = allocator.alloc([]const u8, handle.index.capacity()) catch return -1;
+    defer allocator.free(empty_labels);
+    @memset(empty_labels, "");
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    storage.save(CIndex, allocator, threaded.io(), std.mem.span(path), &handle.index, empty_labels) catch return -1;
+    return 0;
+}
+
+export fn qj_index_load(path: [*:0]const u8) ?*Handle {
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    var loaded = storage.load(CIndex, allocator, threaded.io(), std.mem.span(path)) catch return null;
+    allocator.free(loaded.labels);
+    allocator.free(loaded.label_blob);
+    const handle = allocator.create(Handle) catch {
+        loaded.index.deinit(allocator);
+        return null;
+    };
+    handle.* = .{ .index = loaded.index };
+    return handle;
+}
+
 /// Creates a search context sized for the index's current contents.
 /// Recreate it after further inserts. `m` is the stage-1 candidate count.
 export fn qj_context_create(handle: *const Handle, m: usize) ?*Context {
@@ -86,6 +123,61 @@ export fn qj_search(
         out_scores[i] = result.score;
     }
     return count;
+}
+
+/// Restricts results to `allowed` (user ids); see Index.searchFiltered.
+export fn qj_search_filtered(
+    handle: *const Handle,
+    ctx: *Context,
+    query: [*]const f32,
+    allowed: [*]const u64,
+    allowed_len: usize,
+    k: usize,
+    out_ids: [*]u64,
+    out_scores: [*]f32,
+) usize {
+    var results: [max_k]index_mod.SearchResult = undefined;
+    const capped = @min(k, max_k);
+    const count = handle.index.searchFiltered(ctx, query[0..c_dim], allowed[0..allowed_len], results[0..capped]);
+    for (results[0..count], 0..) |result, i| {
+        out_ids[i] = result.id;
+        out_scores[i] = result.score;
+    }
+    return count;
+}
+
+/// Multi-threaded batch search over n queries (row-major, n*dim floats).
+/// out_ids/out_scores hold n*k slots; out_counts n entries.
+export fn qj_search_batch(
+    handle: *const Handle,
+    queries: [*]const f32,
+    n: usize,
+    k: usize,
+    m: usize,
+    threads: usize,
+    out_ids: [*]u64,
+    out_scores: [*]f32,
+    out_counts: [*]usize,
+) i32 {
+    const results = allocator.alloc(index_mod.SearchResult, n * k) catch return -1;
+    defer allocator.free(results);
+    handle.index.searchBatch(
+        allocator,
+        queries[0 .. n * c_dim],
+        k,
+        m,
+        threads,
+        true,
+        results,
+        out_counts[0..n],
+    ) catch return -1;
+    for (0..n) |q| {
+        for (results[q * k ..][0..out_counts[q]], 0..) |result, i| {
+            out_ids[q * k + i] = result.id;
+            out_scores[q * k + i] = result.score;
+        }
+    }
+    return 0;
 }
 
 test "C API roundtrip" {
