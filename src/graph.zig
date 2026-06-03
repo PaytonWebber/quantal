@@ -33,6 +33,12 @@ fn farther(a: Candidate, b: Candidate) bool {
 const CandidateMinHeap = heap_mod.BinaryHeap(Candidate, closer);
 const CandidateMaxHeap = heap_mod.BinaryHeap(Candidate, farther);
 
+/// Counters describing the last routed query, for diagnostics.
+pub const TraversalStats = struct {
+    layers_traversed: usize = 0,
+    nodes_evaluated: usize = 0,
+};
+
 /// Reusable buffers for beam search. Sized so a traversal can never overflow:
 /// every node is pushed to the candidate heap at most once (the visited bit
 /// is set before pushing), so node_count slots suffice.
@@ -40,6 +46,7 @@ pub const TraversalScratch = struct {
     visited: std.DynamicBitSetUnmanaged = .{},
     cand_buf: []Candidate = &.{},
     result_buf: []Candidate = &.{},
+    stats: TraversalStats = .{},
 
     pub fn ensureCapacity(
         self: *TraversalScratch,
@@ -169,7 +176,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             var cur = self.entry_id;
             var l = old_top;
             while (l > level) : (l -= 1) {
-                cur = greedyDescend(&self.layers.items[l], &bits, cur);
+                cur = greedyDescend(&self.layers.items[l], &bits, cur, &self.build_scratch.stats);
             }
 
             var connect = @min(level, old_top) + 1;
@@ -204,14 +211,27 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
         pub fn route(self: *const Self, query: *const BitVec, m: usize, scratch: *TraversalScratch) []Candidate {
             if (self.node_count == 0 or m == 0) return &.{};
             std.debug.assert(scratch.visited.bit_length >= self.node_count);
+            scratch.stats = .{ .layers_traversed = self.layers.items.len };
 
             var cur = self.entry_id;
             var l = self.layers.items.len - 1;
             while (l > 0) : (l -= 1) {
-                cur = greedyDescend(&self.layers.items[l], query, cur);
+                cur = greedyDescend(&self.layers.items[l], query, cur, &scratch.stats);
             }
             const ef = @min(m, self.node_count);
             return searchLayer(&self.layers.items[0], query, cur, ef, scratch);
+        }
+
+        /// Deserialization support: appends an empty layer (the first one is
+        /// dense, matching ensureLayerCount).
+        pub fn appendLayerForLoad(self: *Self, allocator: std.mem.Allocator) !void {
+            try self.ensureLayerCount(allocator, self.layers.items.len + 1);
+        }
+
+        /// Deserialization support: appends a fully-formed node to a layer.
+        /// Nodes must arrive in their original per-layer order.
+        pub fn appendNodeForLoad(self: *Self, allocator: std.mem.Allocator, layer_idx: usize, node: Node) !void {
+            try self.layers.items[layer_idx].addNode(allocator, node);
         }
 
         fn randomLevel(self: *Self) usize {
@@ -229,12 +249,14 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
 
         /// Spec traversal rule: hop to the closest neighbor until no neighbor
         /// improves on the current node.
-        fn greedyDescend(layer: *const Layer, query: *const BitVec, start_id: u64) u64 {
+        fn greedyDescend(layer: *const Layer, query: *const BitVec, start_id: u64, stats: *TraversalStats) u64 {
             var cur_id = start_id;
             var cur_dist = query.distance(layer.bitsPtr(cur_id));
+            stats.nodes_evaluated += 1;
             while (true) {
                 var improved = false;
                 const node = layer.nodePtr(cur_id);
+                stats.nodes_evaluated += node.edge_count;
                 for (node.neighbors[0..node.edge_count]) |neighbor_id| {
                     const d = query.distance(layer.bitsPtr(neighbor_id));
                     if (d < cur_dist) {
@@ -259,6 +281,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             var results = CandidateMaxHeap.fromBuffer(scratch.result_buf[0..ef]);
 
             const entry_dist = query.distance(layer.bitsPtr(entry_id));
+            scratch.stats.nodes_evaluated += 1;
             scratch.visited.set(@intCast(entry_id));
             candidates.push(.{ .dist = entry_dist, .id = entry_id });
             results.push(.{ .dist = entry_dist, .id = entry_id });
@@ -274,6 +297,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
                 for (node.neighbors[0..node.edge_count]) |neighbor_id| {
                     if (scratch.visited.isSet(@intCast(neighbor_id))) continue;
                     scratch.visited.set(@intCast(neighbor_id));
+                    scratch.stats.nodes_evaluated += 1;
                     const d = query.distance(layer.bitsPtr(neighbor_id));
                     if (results.len < ef) {
                         results.push(.{ .dist = d, .id = neighbor_id });

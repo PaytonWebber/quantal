@@ -106,15 +106,22 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
         /// inner-product score; returns the count. Allocation-free.
         pub fn search(self: *const Self, ctx: *SearchContext, query: []const f32, out: []SearchResult) usize {
             std.debug.assert(query.len == dim);
+            self.rotation.apply(query, ctx.rotated_query);
+            return self.searchRotated(ctx, ctx.rotated_query, out);
+        }
+
+        /// Same as `search`, for a query already in rotated space (e.g.
+        /// assembled from decoded payloads, which live there).
+        pub fn searchRotated(self: *const Self, ctx: *SearchContext, rotated: []const f32, out: []SearchResult) usize {
+            std.debug.assert(rotated.len == dim);
             if (self.len() == 0 or out.len == 0) return 0;
             std.debug.assert(ctx.scratch.visited.bit_length >= self.len());
 
-            self.rotation.apply(query, ctx.rotated_query);
-            const query_bits = Graph.BitVec.fromF32(ctx.rotated_query);
+            const query_bits = Graph.BitVec.fromF32(rotated);
             if (ctx.symmetric) {
-                turboquant.quantizeQuery(ctx.rotated_query, ctx.decoded_query);
+                turboquant.quantizeQuery(rotated, ctx.decoded_query);
             } else {
-                @memcpy(ctx.decoded_query, ctx.rotated_query);
+                @memcpy(ctx.decoded_query, rotated);
             }
             const query_sum = turboquant.buildScoreLut(ctx.decoded_query, ctx.score_lut);
 

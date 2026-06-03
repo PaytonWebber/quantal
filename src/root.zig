@@ -10,6 +10,7 @@ pub const heap = @import("heap.zig");
 pub const rotation = @import("rotation.zig");
 pub const graph = @import("graph.zig");
 pub const index = @import("index.zig");
+pub const storage = @import("storage.zig");
 pub const c_api = @import("c_api.zig");
 
 pub const RandomRotation = rotation.RandomRotation;
@@ -36,6 +37,7 @@ test {
     _ = rotation;
     _ = graph;
     _ = index;
+    _ = storage;
     _ = c_api;
     _ = @import("tests.zig");
 }
