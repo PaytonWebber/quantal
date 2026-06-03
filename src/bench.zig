@@ -39,6 +39,7 @@ const Config = struct {
     profile: bool = false,
     rerank_mode: qj.index.RerankStore = .sq8,
     tq_plus: bool = false,
+    threads: usize = 1,
     /// turbovec/paper-style report: recall1@k for k in 1..64.
     recall_curve: bool = false,
 };
@@ -103,10 +104,17 @@ fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, datas
     defer index.deinit(allocator);
     index.rerank_store = config.rerank_mode;
     index.tq_plus = config.tq_plus;
-    for (0..dataset.n) |i| {
-        try index.add(allocator, i, dataset.base[i * dim ..][0..dim]);
+    if (config.threads > 1 and !config.tq_plus) {
+        const ids = try allocator.alloc(u64, dataset.n);
+        defer allocator.free(ids);
+        for (ids, 0..) |*id, i| id.* = i;
+        try index.addBatch(allocator, ids, dataset.base[0 .. dataset.n * dim], config.threads);
+    } else {
+        for (0..dataset.n) |i| {
+            try index.add(allocator, i, dataset.base[i * dim ..][0..dim]);
+        }
+        try index.freeze(allocator);
     }
-    try index.freeze(allocator);
     const build_ns = timer.read();
     std.debug.print("build: {d:.2}s ({d:.0} vectors/s)\n", .{
         @as(f64, @floatFromInt(build_ns)) / 1e9,
@@ -187,19 +195,29 @@ fn recallCurve(
     for (ks) |k| std.debug.print("    1@{d:<3}", .{k});
     std.debug.print(" {s:>9} {s:>11}\n", .{ "QPS", "us/query" });
 
+    const results = try allocator.alloc(qj.SearchResult, dataset.n_queries * 64);
+    defer allocator.free(results);
+    const counts = try allocator.alloc(usize, dataset.n_queries);
+    defer allocator.free(counts);
+
     for (config.stage1_widths) |m| {
-        var ctx = try Idx.SearchContext.init(allocator, index, m);
-        defer ctx.deinit(allocator);
-        ctx.symmetric = config.symmetric;
+        var timer = Stopwatch.begin(io);
+        try index.searchBatch(
+            allocator,
+            dataset.queries[0 .. dataset.n_queries * dim],
+            64,
+            m,
+            config.threads,
+            config.symmetric,
+            results,
+            counts,
+        );
+        const search_ns = timer.read();
 
         var hits: [ks.len]usize = @splat(0);
-        var out: [64]qj.SearchResult = undefined;
-
-        var timer = Stopwatch.begin(io);
         for (0..dataset.n_queries) |q| {
-            const count = index.search(&ctx, dataset.queries[q * dim ..][0..dim], &out);
             const want = truth[q][0];
-            for (out[0..count], 0..) |result, rank| {
+            for (results[q * 64 ..][0..counts[q]], 0..) |result, rank| {
                 if (result.id == want) {
                     for (ks, 0..) |k, ki| {
                         if (rank < k) hits[ki] += 1;
@@ -208,7 +226,6 @@ fn recallCurve(
                 }
             }
         }
-        const search_ns = timer.read();
 
         const nq: f64 = @floatFromInt(dataset.n_queries);
         std.debug.print("{d:>5}", .{m});
@@ -512,6 +529,8 @@ fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args) !Config {
             config.rerank_mode = std.meta.stringToEnum(qj.index.RerankStore, nextArg(argv, &i)) orelse usage();
         } else if (std.mem.eql(u8, arg, "--tq-plus")) {
             config.tq_plus = true;
+        } else if (std.mem.eql(u8, arg, "--threads")) {
+            config.threads = try std.fmt.parseInt(usize, nextArg(argv, &i), 10);
         } else if (std.mem.eql(u8, arg, "--recall-curve")) {
             config.recall_curve = true;
         } else if (std.mem.eql(u8, arg, "--profile")) {

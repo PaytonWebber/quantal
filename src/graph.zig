@@ -153,8 +153,13 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
         /// Inserts a node under a dense id (ids must arrive as 0, 1, 2, ...;
         /// they double as indices into the visited bitset and payload array).
         pub fn insert(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec) !void {
+            try self.insertWithLevel(allocator, id, bits, self.randomLevel());
+        }
+
+        /// Serial insert at a pre-drawn level (used by the batched build
+        /// when a plan could not be applied).
+        pub fn insertWithLevel(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec, level: usize) !void {
             std.debug.assert(id == self.node_count);
-            const level = self.randomLevel();
             try self.build_scratch.ensureCapacity(allocator, self.node_count + 1, self.ef_construction);
 
             const fresh = Node{
@@ -220,6 +225,78 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             }
             const ef = @min(m, self.node_count);
             return searchLayer(&self.layers.items[0], query, cur, ef, scratch);
+        }
+
+        /// Maximum node level the batched (plan/commit) insert path handles;
+        /// deeper draws (P ~ max_edges^-4) take the serial path instead.
+        pub const plan_max_layers = 4;
+
+        /// A precomputed insertion: the selected neighbors per layer.
+        /// Produced read-only by `planInsert` (safe to run concurrently),
+        /// applied by `commitPlanned` (single writer).
+        pub const InsertPlan = struct {
+            planned: bool = false,
+            level: usize = 0,
+            counts: [plan_max_layers]u32 = @splat(0),
+            neighbors: [plan_max_layers][max_edges]u64 = undefined,
+        };
+
+        /// Read-only insertion planning against the current graph. Returns
+        /// an unplanned result (caller must use the serial `insert`) when
+        /// the graph is empty or the drawn level needs layer promotion.
+        pub fn planInsert(self: *const Self, bits: *const BitVec, level: usize, scratch: *TraversalScratch) InsertPlan {
+            if (self.node_count == 0) return .{};
+            const old_top = self.layers.items.len - 1;
+            if (level > old_top or level >= plan_max_layers) return .{};
+
+            var cur = self.entry_id;
+            var l = old_top;
+            while (l > level) : (l -= 1) {
+                cur = greedyDescend(&self.layers.items[l], bits, cur, &scratch.stats);
+            }
+
+            var plan = InsertPlan{ .planned = true, .level = level };
+            var connect = level + 1;
+            while (connect > 0) {
+                connect -= 1;
+                const layer = &self.layers.items[connect];
+                const found = searchLayer(layer, bits, cur, self.ef_construction, scratch);
+                plan.counts[connect] = @intCast(selectNeighbors(layer, found, &plan.neighbors[connect]));
+                if (found.len > 0) cur = found[0].id;
+            }
+            return plan;
+        }
+
+        /// Applies a plan produced by `planInsert`. The graph may have grown
+        /// since planning (neighbor ids stay valid; within-batch nodes are
+        /// simply invisible to each other's plans).
+        pub fn commitPlanned(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec, plan: InsertPlan) !void {
+            std.debug.assert(plan.planned and id == self.node_count);
+            const fresh = Node{
+                .id = id,
+                .bit_vector = bits,
+                .edge_count = 0,
+                .neighbors = @splat(0),
+            };
+
+            var l: usize = 0;
+            while (l <= plan.level) : (l += 1) {
+                const layer = &self.layers.items[l];
+                try layer.addNode(allocator, fresh);
+                const node = layer.nodePtrMut(id);
+                node.edge_count = plan.counts[l];
+                @memcpy(node.neighbors[0..plan.counts[l]], plan.neighbors[l][0..plan.counts[l]]);
+                for (node.neighbors[0..node.edge_count]) |neighbor_id| {
+                    linkBack(layer, neighbor_id, id);
+                }
+            }
+            self.node_count += 1;
+        }
+
+        /// Draws the level for the next insert (the rng is not thread-safe;
+        /// call serially before parallel planning).
+        pub fn drawLevel(self: *Self) usize {
+            return self.randomLevel();
         }
 
         /// Deserialization support: appends an empty layer (the first one is

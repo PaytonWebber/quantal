@@ -32,14 +32,31 @@
 - turbovec with all 12 threads (4-bit, 1.046 ms/q) is still 2.2× slower than
   single-threaded quantajump at equal recall.
 
+## Multi-threaded (12 threads, same data, same machine)
+
+| system | config | recall1@1 | QPS (MT) | µs/query |
+|---|---|---|---|---|
+| turbovec | 2-bit flat, batch | 0.884 | 1,764 | 567 |
+| turbovec | 4-bit flat, batch | 0.964 | 956 | 1,046 |
+| **quantajump** | m=128, sq8 | **0.964** | **17,156** | **58.3** |
+| **quantajump** | m=512, sq8 | **0.990** | **6,609** | **151.3** |
+
+At matched recall1@1 (0.964), quantajump answers **17.9× more queries/second**.
+GloVe-100/100k MT: 85.6k QPS at m=128.
+
+Build (100k DBpedia-1536): quantajump 33.2s serial → **5.7s** with the batched
+parallel builder (12 threads; plan-parallel/commit-serial, growing batch) —
+on par with turbovec's ~5s MT ingest. Batched-build recall is identical to the
+serial build (GloVe 0.746/0.884 vs 0.739/0.883).
+
 ## Where turbovec wins (honest ledger)
 
 | dimension | turbovec | quantajump |
 |---|---|---|
-| Resident memory | **75.5 MiB** (4-bit, no originals) | 715 MiB (75.5 payloads + 54 graph + 586 fp32 rerank store) |
-| Build time (100k, ST) | **10.1 s** (flat, no graph) | 33.2 s (Gram-Schmidt init + serial HNSW) |
+| Resident memory | **75.5 MiB** (4-bit, no originals) | 276 MiB with sq8 (75.5 payloads + 54 graph + 147 sq8 store) |
 | recall1@k tail | →1.0 by k=4 (exhaustive) | plateaus at routing recall (raise m to push it) |
 | Recall1@k convergence guarantee | exhaustive scan, unconditional | requires the true NN to be routed into the beam |
+| Maturity | PyPI/crates releases, deletes, filters, integrations | research-grade Zig library + C ABI |
 
 Notes:
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;

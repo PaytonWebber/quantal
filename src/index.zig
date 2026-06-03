@@ -172,24 +172,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             ));
             errdefer _ = self.payloads.pop();
 
-            switch (self.rerank_store) {
-                .none => {},
-                .fp32 => {
-                    std.debug.assert(self.originals.items.len == internal_id * dim);
-                    try self.originals.appendSlice(allocator, rotated);
-                },
-                .sq8 => {
-                    std.debug.assert(self.sq8_codes.items.len == internal_id * dim);
-                    var max_abs: f32 = 0;
-                    for (rotated) |v| max_abs = @max(max_abs, @abs(v));
-                    const scale = @max(max_abs, 1e-20) / 127.0;
-                    try self.sq8_scales.append(allocator, scale);
-                    try self.sq8_codes.ensureUnusedCapacity(allocator, dim);
-                    for (rotated) |v| {
-                        self.sq8_codes.appendAssumeCapacity(@intFromFloat(@round(v / scale)));
-                    }
-                },
-            }
+            try self.appendRerankRecord(allocator, rotated);
             errdefer switch (self.rerank_store) {
                 .none => {},
                 .fp32 => self.originals.shrinkRetainingCapacity(internal_id * dim),
@@ -201,6 +184,189 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
 
             const bits = Graph.BitVec.fromF32(rotated);
             try self.routing.insert(allocator, internal_id, bits);
+        }
+
+        fn appendRerankRecord(self: *Self, allocator: std.mem.Allocator, rotated: []const f32) !void {
+            switch (self.rerank_store) {
+                .none => {},
+                .fp32 => try self.originals.appendSlice(allocator, rotated),
+                .sq8 => {
+                    var max_abs: f32 = 0;
+                    for (rotated) |v| max_abs = @max(max_abs, @abs(v));
+                    const scale = @max(max_abs, 1e-20) / 127.0;
+                    try self.sq8_scales.append(allocator, scale);
+                    try self.sq8_codes.ensureUnusedCapacity(allocator, dim);
+                    for (rotated) |v| {
+                        self.sq8_codes.appendAssumeCapacity(@intFromFloat(@round(v / scale)));
+                    }
+                },
+            }
+        }
+
+        /// Multi-threaded bulk ingest. Equivalent to calling `add` for each
+        /// (id, vector) pair, except vectors within the same internal batch
+        /// do not see each other while their graph neighbors are planned
+        /// (batch size grows with the graph, so early inserts stay serial).
+        /// Not allowed while a TQ+ calibration buffer is still open.
+        pub fn addBatch(
+            self: *Self,
+            allocator: std.mem.Allocator,
+            ids: []const u64,
+            coords: []const f32,
+            thread_count: usize,
+        ) !void {
+            std.debug.assert(coords.len == ids.len * dim);
+            std.debug.assert(!self.tq_plus or self.calib_frozen);
+            const threads = @max(thread_count, 1);
+            const max_batch: usize = 1024;
+
+            const Staged = struct {
+                rotated: []f32,
+                payloads: []Payload,
+                bits: []Graph.BitVec,
+                levels: []usize,
+                plans: []Graph.InsertPlan,
+            };
+            const staged = Staged{
+                .rotated = try allocator.alloc(f32, max_batch * dim),
+                .payloads = try allocator.alloc(Payload, max_batch),
+                .bits = try allocator.alloc(Graph.BitVec, max_batch),
+                .levels = try allocator.alloc(usize, max_batch),
+                .plans = try allocator.alloc(Graph.InsertPlan, max_batch),
+            };
+            defer {
+                allocator.free(staged.rotated);
+                allocator.free(staged.payloads);
+                allocator.free(staged.bits);
+                allocator.free(staged.levels);
+                allocator.free(staged.plans);
+            }
+            const scratches = try allocator.alloc(graph_mod.TraversalScratch, threads);
+            defer {
+                for (scratches) |*s| s.deinit(allocator);
+                allocator.free(scratches);
+            }
+            @memset(scratches, .{});
+            const worker_threads = try allocator.alloc(std.Thread, threads);
+            defer allocator.free(worker_threads);
+
+            const Worker = struct {
+                index: *const Self,
+                staged: *const Staged,
+                batch_coords: []const f32,
+                batch_ids: []const u64,
+                batch_len: usize,
+                stride: usize,
+
+                fn run(w: @This(), t: usize, scratch: *graph_mod.TraversalScratch) void {
+                    var i = t;
+                    while (i < w.batch_len) : (i += w.stride) {
+                        const rotated = w.staged.rotated[i * dim ..][0..dim];
+                        w.index.rotation.apply(w.batch_coords[i * dim ..][0..dim], rotated);
+                        w.staged.payloads[i] = Payload.encodeWithCalibration(
+                            w.batch_ids[i],
+                            rotated,
+                            w.index.calib_shift,
+                            w.index.calib_scale,
+                        );
+                        w.staged.bits[i] = Graph.BitVec.fromF32(rotated);
+                        w.staged.plans[i] = w.index.routing.planInsert(&w.staged.bits[i], w.staged.levels[i], scratch);
+                    }
+                }
+            };
+
+            var next: usize = 0;
+            while (next < ids.len) {
+                const batch = @min(@min(max_batch, @max(self.routing.node_count, 1)), ids.len - next);
+                for (staged.levels[0..batch]) |*level| level.* = self.routing.drawLevel();
+                for (scratches) |*s| {
+                    try s.ensureCapacity(allocator, self.routing.node_count + 1, self.routing.ef_construction);
+                }
+
+                const worker = Worker{
+                    .index = self,
+                    .staged = &staged,
+                    .batch_coords = coords[next * dim ..],
+                    .batch_ids = ids[next..],
+                    .batch_len = batch,
+                    .stride = threads,
+                };
+                if (threads == 1 or batch == 1) {
+                    worker.run(0, &scratches[0]);
+                } else {
+                    for (worker_threads[0..threads], 0..) |*thread, t| {
+                        thread.* = try std.Thread.spawn(.{}, Worker.run, .{ worker, t, &scratches[t] });
+                    }
+                    for (worker_threads[0..threads]) |thread| thread.join();
+                }
+
+                for (0..batch) |i| {
+                    const internal_id: u64 = self.payloads.items.len;
+                    const rotated = staged.rotated[i * dim ..][0..dim];
+                    try self.payloads.append(allocator, staged.payloads[i]);
+                    try self.appendRerankRecord(allocator, rotated);
+                    if (staged.plans[i].planned) {
+                        try self.routing.commitPlanned(allocator, internal_id, staged.bits[i], staged.plans[i]);
+                    } else {
+                        try self.routing.insertWithLevel(allocator, internal_id, staged.bits[i], staged.levels[i]);
+                    }
+                }
+                next += batch;
+            }
+        }
+
+        /// Multi-threaded query batch: `queries` is n*dim coordinates,
+        /// `out_results` n*k slots, `out_counts` n entries. Each thread owns
+        /// a private SearchContext (this call allocates; per-query search
+        /// remains allocation-free).
+        pub fn searchBatch(
+            self: *const Self,
+            allocator: std.mem.Allocator,
+            queries: []const f32,
+            k: usize,
+            m: usize,
+            thread_count: usize,
+            symmetric: bool,
+            out_results: []SearchResult,
+            out_counts: []usize,
+        ) !void {
+            const n = queries.len / dim;
+            std.debug.assert(queries.len == n * dim);
+            std.debug.assert(out_results.len >= n * k and out_counts.len >= n);
+            const threads = @min(@max(thread_count, 1), @max(n, 1));
+
+            const contexts = try allocator.alloc(SearchContext, threads);
+            var ready: usize = 0;
+            defer {
+                for (contexts[0..ready]) |*ctx| ctx.deinit(allocator);
+                allocator.free(contexts);
+            }
+            for (contexts) |*ctx| {
+                ctx.* = try SearchContext.init(allocator, self, m);
+                ctx.symmetric = symmetric;
+                ready += 1;
+            }
+
+            const Worker = struct {
+                fn run(index: *const Self, ctx: *SearchContext, qs: []const f32, t: usize, stride: usize, k_: usize, results: []SearchResult, counts: []usize) void {
+                    var i = t;
+                    const total = qs.len / dim;
+                    while (i < total) : (i += stride) {
+                        counts[i] = index.search(ctx, qs[i * dim ..][0..dim], results[i * k_ ..][0..k_]);
+                    }
+                }
+            };
+
+            if (threads == 1) {
+                Worker.run(self, &contexts[0], queries, 0, 1, k, out_results, out_counts);
+                return;
+            }
+            const worker_threads = try allocator.alloc(std.Thread, threads);
+            defer allocator.free(worker_threads);
+            for (worker_threads, 0..) |*thread, t| {
+                thread.* = try std.Thread.spawn(.{}, Worker.run, .{ self, &contexts[t], queries, t, threads, k, out_results, out_counts });
+            }
+            for (worker_threads) |thread| thread.join();
         }
 
         /// True when every vector has a stored rerank record, enabling the
@@ -594,6 +760,55 @@ test "tq_plus with fewer adds than the sample needs explicit freeze" {
     defer ctx.deinit(allocator);
     var out: [5]SearchResult = undefined;
     try std.testing.expectEqual(@as(usize, 5), index.search(&ctx, &coords, &out));
+}
+
+test "addBatch + searchBatch match serial quality" {
+    const dim = 32;
+    const Idx = Index(dim, 8);
+    const allocator = std.testing.allocator;
+
+    var prng = std.Random.DefaultPrng.init(73);
+    const rand = prng.random();
+    const n = 400;
+    const coords = try allocator.alloc(f32, n * dim);
+    defer allocator.free(coords);
+    for (coords) |*c| c.* = rand.floatNorm(f32);
+    const ids = try allocator.alloc(u64, n);
+    defer allocator.free(ids);
+    for (ids, 0..) |*id, i| id.* = i;
+
+    var serial = try Idx.init(allocator, 32, 12);
+    defer serial.deinit(allocator);
+    for (0..n) |i| try serial.add(allocator, i, coords[i * dim ..][0..dim]);
+
+    var batched = try Idx.init(allocator, 32, 12);
+    defer batched.deinit(allocator);
+    try batched.addBatch(allocator, ids, coords, 4);
+    try std.testing.expectEqual(serial.len(), batched.len());
+
+    // Self-queries through both the serial and batch search paths: the
+    // batched graph differs (within-batch blindness) but must stay near
+    // serial quality.
+    const nq = 100;
+    const results = try allocator.alloc(SearchResult, nq * 5);
+    defer allocator.free(results);
+    const counts = try allocator.alloc(usize, nq);
+    defer allocator.free(counts);
+    try batched.searchBatch(allocator, coords[0 .. nq * dim], 5, 64, 4, true, results, counts);
+
+    var ctx = try Idx.SearchContext.init(allocator, &serial, 64);
+    defer ctx.deinit(allocator);
+    var out: [5]SearchResult = undefined;
+    var serial_hits: usize = 0;
+    var batch_hits: usize = 0;
+    for (0..nq) |i| {
+        try std.testing.expectEqual(@as(usize, 5), counts[i]);
+        _ = serial.search(&ctx, coords[i * dim ..][0..dim], &out);
+        if (out[0].id == i) serial_hits += 1;
+        if (results[i * 5].id == i) batch_hits += 1;
+    }
+    try std.testing.expect(batch_hits + 5 >= serial_hits);
+    try std.testing.expect(batch_hits >= 90);
 }
 
 test "results are sorted by descending score" {
