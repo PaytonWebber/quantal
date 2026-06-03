@@ -38,6 +38,8 @@ const Config = struct {
     symmetric: bool = true,
     profile: bool = false,
     exact_rerank: bool = true,
+    /// turbovec/paper-style report: recall1@k for k in 1..64.
+    recall_curve: bool = false,
 };
 
 const Dataset = struct {
@@ -123,6 +125,9 @@ fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, datas
     if (config.profile) {
         return profilePhases(Idx, io, &index, dataset, config);
     }
+    if (config.recall_curve) {
+        return recallCurve(Idx, allocator, io, &index, dataset, config, truth);
+    }
 
     std.debug.print("{s:>5} {s:>10} {s:>10} {s:>11} {s:>9} {s:>11}\n", .{
         "m", "recall1@1", "recall1@10", "recall10@10", "QPS", "us/query",
@@ -155,6 +160,57 @@ fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, datas
             @as(f64, @floatFromInt(hits_1)) / nq,
             @as(f64, @floatFromInt(hits_10)) / nq,
             @as(f64, @floatFromInt(overlap)) / (nq * top_k),
+            nq * 1e9 / @as(f64, @floatFromInt(search_ns)),
+            @as(f64, @floatFromInt(search_ns)) / (nq * 1e3),
+        });
+    }
+}
+
+/// turbovec/paper-style report: how often the exact top-1 appears within the
+/// approximate top-k, for k in {1,2,4,8,16,32,64} (their Fig. 5 metric).
+fn recallCurve(
+    comptime Idx: type,
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    index: *const Idx,
+    dataset: *const Dataset,
+    config: Config,
+    truth: []const [top_k]u64,
+) !void {
+    const dim = Idx.dimension;
+    const ks = [_]usize{ 1, 2, 4, 8, 16, 32, 64 };
+
+    std.debug.print("{s:>5}", .{"m"});
+    for (ks) |k| std.debug.print("    1@{d:<3}", .{k});
+    std.debug.print(" {s:>9} {s:>11}\n", .{ "QPS", "us/query" });
+
+    for (config.stage1_widths) |m| {
+        var ctx = try Idx.SearchContext.init(allocator, index, m);
+        defer ctx.deinit(allocator);
+        ctx.symmetric = config.symmetric;
+
+        var hits: [ks.len]usize = @splat(0);
+        var out: [64]qj.SearchResult = undefined;
+
+        var timer = Stopwatch.begin(io);
+        for (0..dataset.n_queries) |q| {
+            const count = index.search(&ctx, dataset.queries[q * dim ..][0..dim], &out);
+            const want = truth[q][0];
+            for (out[0..count], 0..) |result, rank| {
+                if (result.id == want) {
+                    for (ks, 0..) |k, ki| {
+                        if (rank < k) hits[ki] += 1;
+                    }
+                    break;
+                }
+            }
+        }
+        const search_ns = timer.read();
+
+        const nq: f64 = @floatFromInt(dataset.n_queries);
+        std.debug.print("{d:>5}", .{m});
+        for (hits) |h| std.debug.print("   {d:.4}", .{@as(f64, @floatFromInt(h)) / nq});
+        std.debug.print(" {d:>9.0} {d:>11.1}\n", .{
             nq * 1e9 / @as(f64, @floatFromInt(search_ns)),
             @as(f64, @floatFromInt(search_ns)) / (nq * 1e3),
         });
@@ -449,6 +505,8 @@ fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args) !Config {
             config.symmetric = false;
         } else if (std.mem.eql(u8, arg, "--no-exact")) {
             config.exact_rerank = false;
+        } else if (std.mem.eql(u8, arg, "--recall-curve")) {
+            config.recall_curve = true;
         } else if (std.mem.eql(u8, arg, "--profile")) {
             config.profile = true;
         } else if (std.mem.eql(u8, arg, "--query-file")) {
