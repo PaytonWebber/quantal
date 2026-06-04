@@ -23,6 +23,9 @@ typedef struct qj_context qj_context;
 /* The vector dimension this library was compiled for. */
 size_t qj_dim(void);
 
+/* The SimHash routing-code length (>= qj_dim(); larger on low-dim builds). */
+size_t qj_routing_bits(void);
+
 /* Creates an empty index. ef_construction controls build-time beam width
  * (e.g. 2x the graph degree); seed parameterizes the random rotation.
  * Returns NULL on allocation failure. */

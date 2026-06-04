@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
 
     const c_dim = b.option(usize, "c-dim", "Vector dimension the C API is compiled for") orelse 1536;
     const c_max_edges = b.option(usize, "c-max-edges", "Graph degree the C API is compiled for") orelse 32;
-    const c_routing_bits = b.option(usize, "c-routing-bits", "SimHash routing-code length (0 = use c-dim; raise for low-dim datasets)") orelse 0;
+    const c_routing_bits = b.option(usize, "c-routing-bits", "SimHash routing-code length (0 = auto per dimension; see index.autoRoutingBits)") orelse 0;
 
     const options = b.addOptions();
     options.addOption(usize, "c_dim", c_dim);

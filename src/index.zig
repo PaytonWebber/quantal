@@ -22,6 +22,22 @@ pub const SearchResult = heap_mod.SearchResult;
 /// - none: stage 3 disabled, stage-2 quantized scores are final
 pub const RerankStore = enum(u8) { none = 0, fp32 = 1, sq8 = 2 };
 
+/// Recommended routing_bits for a given data dimension, derived from the
+/// dimension-crossover and d=1536 sweeps (benchmarks/RESULTS.md):
+///   - low dim: the d-bit code is starved, so lift it to an absolute floor
+///     (the sweep showed ≈0.90 routing recall@10 needs ~512 bits by d=100,
+///     ~1024 by d=200);
+///   - high dim: the d-bit code already saturates the angular structure and
+///     adding a projection only costs throughput, so use dim unchanged.
+/// The result is always ≥ dim — below-dim codes were measured to be a net
+/// loss. Used when routing_bits is left at 0 (auto) at the build/C-ABI layer.
+pub fn autoRoutingBits(dim: usize) usize {
+    if (dim <= 64) return 256;
+    if (dim <= 128) return 512;
+    if (dim <= 256) return 1024;
+    return dim;
+}
+
 /// `routing_bits` is the SimHash routing-code length. The default, `dim`,
 /// routes on the sign bits of the rotated vector exactly as the 1-bit-per-
 /// dimension design always has (no projection, no cost). Any other value
@@ -691,6 +707,21 @@ test "empty index returns no results" {
     const query: [32]f32 = @splat(1.0);
     var out: [4]SearchResult = undefined;
     try std.testing.expectEqual(@as(usize, 0), index.search(&ctx, &query, &out));
+}
+
+test "autoRoutingBits matches the measured table and never goes below dim" {
+    try std.testing.expectEqual(@as(usize, 256), autoRoutingBits(25));
+    try std.testing.expectEqual(@as(usize, 256), autoRoutingBits(64));
+    try std.testing.expectEqual(@as(usize, 512), autoRoutingBits(100));
+    try std.testing.expectEqual(@as(usize, 512), autoRoutingBits(128));
+    try std.testing.expectEqual(@as(usize, 1024), autoRoutingBits(200));
+    try std.testing.expectEqual(@as(usize, 1024), autoRoutingBits(256));
+    try std.testing.expectEqual(@as(usize, 768), autoRoutingBits(768));
+    try std.testing.expectEqual(@as(usize, 1536), autoRoutingBits(1536));
+    // Invariant: auto is never a below-dim (lossy) code.
+    for ([_]usize{ 16, 50, 100, 200, 384, 1536, 3072 }) |d| {
+        try std.testing.expect(autoRoutingBits(d) >= d);
+    }
 }
 
 test "multi-bit routing: projection improves low-dim recall and self-query works" {

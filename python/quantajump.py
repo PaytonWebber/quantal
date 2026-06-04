@@ -31,6 +31,7 @@ def _load_lib(path):
     lib = ctypes.CDLL(path)
     sigs = {
         "qj_dim": ([], ctypes.c_size_t),
+        "qj_routing_bits": ([], ctypes.c_size_t),
         "qj_index_create": ([ctypes.c_size_t, ctypes.c_uint64], ctypes.c_void_p),
         "qj_index_destroy": ([ctypes.c_void_p], None),
         "qj_index_add": ([ctypes.c_void_p, ctypes.c_uint64, _f32p], ctypes.c_int32),
@@ -83,6 +84,7 @@ class Index:
                  seed=42, _handle=None, _lib=None):
         self._lib = _lib or _load_lib(lib_path)
         self.dim = int(self._lib.qj_dim())
+        self.routing_bits = int(self._lib.qj_routing_bits())
         if _handle is not None:
             self._handle = _handle
         else:

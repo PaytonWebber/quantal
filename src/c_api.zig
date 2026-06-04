@@ -2,8 +2,9 @@
 //!
 //! The dimension, graph degree, and routing-code length are fixed at compile
 //! time via `-Dc-dim` / `-Dc-max-edges` / `-Dc-routing-bits` (defaults:
-//! 1536 / 32 / =c-dim). Raise c-routing-bits above c-dim for low-dimensional
-//! datasets. See include/quantajump.h for the matching prototypes.
+//! 1536 / 32 / 0). c-routing-bits == 0 means "auto" — the per-dimension
+//! recommendation (lifts low dims, leaves high dims at dim); see
+//! index.autoRoutingBits. See include/quantajump.h for the prototypes.
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -12,8 +13,11 @@ const storage = @import("storage.zig");
 
 pub const c_dim = build_options.c_dim;
 pub const c_max_edges = build_options.c_max_edges;
-// 0 means "default to c_dim" (resolved in build.zig).
-pub const c_routing_bits = if (build_options.c_routing_bits == 0) c_dim else build_options.c_routing_bits;
+// 0 => auto-tune from the dimension; otherwise use the explicit value.
+pub const c_routing_bits = if (build_options.c_routing_bits == 0)
+    index_mod.autoRoutingBits(c_dim)
+else
+    build_options.c_routing_bits;
 
 const CIndex = index_mod.Index(c_dim, c_max_edges, c_routing_bits);
 const allocator = std.heap.smp_allocator;
@@ -28,6 +32,12 @@ pub const Context = CIndex.SearchContext;
 
 export fn qj_dim() usize {
     return c_dim;
+}
+
+/// The SimHash routing-code length this library was compiled with (== c_dim
+/// unless raised for low-dimensional data; see index.autoRoutingBits).
+export fn qj_routing_bits() usize {
+    return c_routing_bits;
 }
 
 export fn qj_index_create(ef_construction: usize, seed: u64) ?*Handle {
