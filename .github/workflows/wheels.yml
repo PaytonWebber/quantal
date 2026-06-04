@@ -30,7 +30,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0-dev.2676+4e2cec265
+          version: 0.16.0
 
       - uses: actions/setup-python@v5
         with:

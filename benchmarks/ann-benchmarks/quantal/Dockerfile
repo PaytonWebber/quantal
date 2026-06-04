@@ -1,10 +1,10 @@
 FROM ann-benchmarks
 
 # Zig is distributed as a single static tarball — no system package needed.
-ARG ZIG_VERSION=0.16.0-dev.2676+4e2cec265
+ARG ZIG_VERSION=0.16.0
 RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -sL "https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
+RUN curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
         | tar -xJ -C /opt \
     && ln -s /opt/zig-x86_64-linux-${ZIG_VERSION}/zig /usr/local/bin/zig
 
