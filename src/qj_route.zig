@@ -65,7 +65,7 @@ fn runBuildDispatch(allocator: std.mem.Allocator, io: std.Io, config: BuildConfi
 }
 
 fn runBuild(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, config: BuildConfig, data: GloveData) !void {
-    const Idx = qj.Index(dim, max_edges);
+    const Idx = qj.Index(dim, max_edges, dim);
     var index = try Idx.init(allocator, config.ef_construction, config.seed);
     defer index.deinit(allocator);
 
@@ -102,7 +102,7 @@ fn runQueryDispatch(allocator: std.mem.Allocator, io: std.Io, config: QueryConfi
 }
 
 fn runQuery(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, config: QueryConfig) !void {
-    const Idx = qj.Index(dim, max_edges);
+    const Idx = qj.Index(dim, max_edges, dim);
 
     var timer = Stopwatch.begin(io);
     var loaded = try qj.storage.load(Idx, allocator, io, config.index_path);

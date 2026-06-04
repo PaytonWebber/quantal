@@ -22,15 +22,33 @@ pub const SearchResult = heap_mod.SearchResult;
 /// - none: stage 3 disabled, stage-2 quantized scores are final
 pub const RerankStore = enum(u8) { none = 0, fp32 = 1, sq8 = 2 };
 
-pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
+/// `routing_bits` is the SimHash routing-code length. The default, `dim`,
+/// routes on the sign bits of the rotated vector exactly as the 1-bit-per-
+/// dimension design always has (no projection, no cost). Setting it larger
+/// than `dim` adds a `routing_bits × dim` random projection so routing
+/// recall no longer caps at the data dimension — the fix for low-dimensional
+/// datasets (see benchmarks/RESULTS.md). It never needs to exceed a few
+/// thousand; high-dimensional embeddings already win at the default.
+pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bits: usize) type {
+    comptime std.debug.assert(routing_bits >= dim);
     return struct {
         const Self = @This();
         pub const Payload = turboquant.TurboQuantPayload(dim);
-        pub const Graph = graph_mod.RoutingGraph(dim, max_edges);
+        pub const Graph = graph_mod.RoutingGraph(routing_bits, max_edges);
         pub const Rotation = rotation_mod.RandomRotation(dim);
+        pub const Projection = rotation_mod.RandomProjection(routing_bits, dim);
         pub const dimension = dim;
+        pub const routing_bit_count = routing_bits;
+        /// When false (routing_bits == dim) the routing code is the rotated
+        /// vector's signs and no projection matrix exists.
+        pub const uses_projection = routing_bits != dim;
 
         rotation: Rotation,
+        /// Routing projection (only allocated when uses_projection).
+        projection: if (uses_projection) Projection else void = if (uses_projection) undefined else {},
+        /// Scratch holding the projected routing vector during ingest
+        /// (length routing_bits; empty when !uses_projection).
+        route_buf: []f32 = &.{},
         payloads: std.ArrayList(Payload) = .empty,
         routing: Graph,
         rotate_buf: []f32,
@@ -73,16 +91,28 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             const rotate_buf = try allocator.alloc(f32, dim);
             errdefer allocator.free(rotate_buf);
             const calib_buf = try allocator.alloc(f32, dim);
-            return .{
+            errdefer allocator.free(calib_buf);
+
+            var self = Self{
                 .rotation = rot,
                 .routing = Graph.init(ef_construction),
                 .rotate_buf = rotate_buf,
                 .calib_buf = calib_buf,
             };
+            if (uses_projection) {
+                // Independent seed so the projection is uncorrelated with Π.
+                self.projection = try Projection.init(allocator, seed ^ 0xD1CE_5EED_1234_ABCD);
+                self.route_buf = try allocator.alloc(f32, routing_bits);
+            }
+            return self;
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.rotation.deinit(allocator);
+            if (uses_projection) {
+                self.projection.deinit(allocator);
+                allocator.free(self.route_buf);
+            }
             self.payloads.deinit(allocator);
             self.routing.deinit(allocator);
             self.originals.deinit(allocator);
@@ -215,9 +245,21 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 },
             };
 
-            const bits = Graph.BitVec.fromF32(rotated);
+            const bits = self.routeCode(rotated, self.route_buf);
             try self.routing.insert(allocator, internal_id, bits);
             try self.registerId(allocator, id, internal_id);
+        }
+
+        /// Routing code for a rotated vector. With routing_bits == dim this
+        /// is just the rotated signs (the original 1-bit-per-dim code). With
+        /// routing_bits > dim it is sign(R · rotated); since R · (Π·x) is a
+        /// valid SimHash of x, scratch must be `routing_bits` long.
+        fn routeCode(self: *const Self, rotated: []const f32, scratch: []f32) Graph.BitVec {
+            if (uses_projection) {
+                self.projection.project(rotated, scratch);
+                return Graph.BitVec.fromF32(scratch);
+            }
+            return Graph.BitVec.fromF32(rotated);
         }
 
         fn registerId(self: *Self, allocator: std.mem.Allocator, user_id: u64, internal: u64) !void {
@@ -288,6 +330,10 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 allocator.free(scratches);
             }
             @memset(scratches, .{});
+            // Per-worker projection scratch (routing_bits each); unused when
+            // !uses_projection.
+            const route_scratch = try allocator.alloc(f32, if (uses_projection) threads * routing_bits else 0);
+            defer allocator.free(route_scratch);
             const worker_threads = try allocator.alloc(std.Thread, threads);
             defer allocator.free(worker_threads);
 
@@ -299,7 +345,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 batch_len: usize,
                 stride: usize,
 
-                fn run(w: @This(), t: usize, scratch: *graph_mod.TraversalScratch) void {
+                fn run(w: @This(), t: usize, scratch: *graph_mod.TraversalScratch, route: []f32) void {
                     var i = t;
                     while (i < w.batch_len) : (i += w.stride) {
                         const rotated = w.staged.rotated[i * dim ..][0..dim];
@@ -310,9 +356,13 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                             w.index.calib_shift,
                             w.index.calib_scale,
                         );
-                        w.staged.bits[i] = Graph.BitVec.fromF32(rotated);
+                        w.staged.bits[i] = w.index.routeCode(rotated, route);
                         w.staged.plans[i] = w.index.routing.planInsert(&w.staged.bits[i], w.staged.levels[i], scratch);
                     }
+                }
+
+                fn routeFor(_: @This(), buf: []f32, t: usize) []f32 {
+                    return if (uses_projection) buf[t * routing_bits ..][0..routing_bits] else &.{};
                 }
             };
 
@@ -333,10 +383,10 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                     .stride = threads,
                 };
                 if (threads == 1 or batch == 1) {
-                    worker.run(0, &scratches[0]);
+                    worker.run(0, &scratches[0], worker.routeFor(route_scratch, 0));
                 } else {
                     for (worker_threads[0..threads], 0..) |*thread, t| {
-                        thread.* = try std.Thread.spawn(.{}, Worker.run, .{ worker, t, &scratches[t] });
+                        thread.* = try std.Thread.spawn(.{}, Worker.run, .{ worker, t, &scratches[t], worker.routeFor(route_scratch, t) });
                     }
                     for (worker_threads[0..threads]) |thread| thread.join();
                 }
@@ -436,6 +486,9 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
         pub const SearchContext = struct {
             scratch: graph_mod.TraversalScratch = .{},
             rotated_query: []f32,
+            /// Projected routing query (length routing_bits; empty when
+            /// !uses_projection).
+            projected_query: []f32 = &.{},
             decoded_query: []f32,
             score_lut: []f32,
             /// Stage-2 output / stage-3 input: the top rerank_factor * k
@@ -464,6 +517,8 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
                 errdefer allocator.free(ctx.decoded_query);
                 errdefer allocator.free(ctx.score_lut);
                 errdefer allocator.free(ctx.rerank_pool);
+                if (uses_projection) ctx.projected_query = try allocator.alloc(f32, routing_bits);
+                errdefer if (uses_projection) allocator.free(ctx.projected_query);
                 try ctx.scratch.ensureCapacity(allocator, @max(index.capacity(), 1), m);
                 return ctx;
             }
@@ -471,6 +526,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             pub fn deinit(self: *SearchContext, allocator: std.mem.Allocator) void {
                 self.scratch.deinit(allocator);
                 allocator.free(self.rotated_query);
+                if (uses_projection) allocator.free(self.projected_query);
                 allocator.free(self.decoded_query);
                 allocator.free(self.score_lut);
                 allocator.free(self.rerank_pool);
@@ -502,7 +558,7 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize) type {
             // Routing bits are raw-space on both sides (see insertRotated);
             // stage-2 LUT scoring and stage 3 also estimate inner products
             // in the raw rotated space.
-            const query_bits = Graph.BitVec.fromF32(rotated);
+            const query_bits = self.routeCode(rotated, ctx.projected_query);
 
             if (ctx.symmetric) {
                 turboquant.quantizeQuery(rotated, ctx.decoded_query);
@@ -623,7 +679,7 @@ fn dotSq8(q: []const f32, codes: []const i8) f32 {
 }
 
 test "empty index returns no results" {
-    const Idx = Index(32, 4);
+    const Idx = Index(32, 4, 32);
     var index = try Idx.init(std.testing.allocator, 16, 1);
     defer index.deinit(std.testing.allocator);
 
@@ -635,11 +691,59 @@ test "empty index returns no results" {
     try std.testing.expectEqual(@as(usize, 0), index.search(&ctx, &query, &out));
 }
 
+test "multi-bit routing: projection improves low-dim recall and self-query works" {
+    const dim = 16;
+    const allocator = std.testing.allocator;
+    const Wide = Index(dim, 8, 256); // routing_bits > dim -> uses projection
+    try std.testing.expect(Wide.uses_projection);
+
+    var index = try Wide.init(allocator, 32, 4);
+    defer index.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(88);
+    const rand = prng.random();
+    var stored: [120][dim]f32 = undefined;
+    for (&stored, 0..) |*coords, i| {
+        for (coords) |*c| c.* = rand.floatNorm(f32);
+        try index.add(allocator, i, coords);
+    }
+
+    var ctx = try Wide.SearchContext.init(allocator, &index, 64);
+    defer ctx.deinit(allocator);
+    var out: [5]SearchResult = undefined;
+    var hits: usize = 0;
+    for (stored, 0..) |coords, i| {
+        const count = index.search(&ctx, &coords, &out);
+        try std.testing.expect(count == 5);
+        if (out[0].id == i) hits += 1;
+    }
+    // Exact rerank guarantees the self-vector ranks first whenever routing
+    // surfaces it; a 256-bit code on 16-dim data routes almost all of them.
+    if (hits < 110) std.debug.print("multi-bit self-recall hits: {d}/120\n", .{hits});
+    try std.testing.expect(hits >= 110);
+
+    // Serialize/deserialize must carry the projection matrix.
+    var labels: [120][]const u8 = undefined;
+    for (&labels) |*l| l.* = "v";
+    const storage = @import("storage.zig");
+    const bytes = try storage.serialize(Wide, allocator, &index, &labels);
+    defer allocator.free(bytes);
+    var loaded = try storage.deserialize(Wide, allocator, bytes);
+    defer loaded.deinit(allocator);
+    try std.testing.expect(Wide.uses_projection);
+    var ctx2 = try Wide.SearchContext.init(allocator, &loaded.index, 64);
+    defer ctx2.deinit(allocator);
+    var out2: [5]SearchResult = undefined;
+    const n2 = loaded.index.search(&ctx2, &stored[3], &out2);
+    try std.testing.expectEqual(@as(usize, 5), n2);
+    try std.testing.expectEqual(@as(u64, 3), out2[0].id);
+}
+
 test "clustered recall: queries land in their own cluster" {
     const dim = 32;
     const clusters = 10;
     const per_cluster = 50;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
 
     const allocator = std.testing.allocator;
     var index = try Idx.init(allocator, 48, 42);
@@ -689,7 +793,7 @@ test "clustered recall: queries land in their own cluster" {
 
 test "exact rerank returns the stored vector itself on self-query" {
     const dim = 32;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 32, 3);
@@ -728,7 +832,7 @@ test "exact rerank returns the stored vector itself on self-query" {
 
 test "sq8 and fp32 rerank stores agree on results" {
     const dim = 48;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var idx_fp32 = try Idx.init(allocator, 32, 9);
@@ -768,7 +872,7 @@ test "sq8 and fp32 rerank stores agree on results" {
 
 test "rerank_store=none falls back to quantized scoring" {
     const dim = 32;
-    const Idx = Index(dim, 4);
+    const Idx = Index(dim, 4, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 16, 5);
@@ -793,7 +897,7 @@ test "rerank_store=none falls back to quantized scoring" {
 
 test "tq_plus calibration: buffered ingest, freeze, and self-recall" {
     const dim = 32;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 32, 23);
@@ -829,7 +933,7 @@ test "tq_plus calibration: buffered ingest, freeze, and self-recall" {
 
 test "tq_plus with fewer adds than the sample needs explicit freeze" {
     const dim = 32;
-    const Idx = Index(dim, 4);
+    const Idx = Index(dim, 4, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 16, 2);
@@ -855,7 +959,7 @@ test "tq_plus with fewer adds than the sample needs explicit freeze" {
 
 test "remove tombstones a vector and search skips it" {
     const dim = 32;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 32, 19);
@@ -891,7 +995,7 @@ test "remove tombstones a vector and search skips it" {
 
 test "searchFiltered restricts results to the allowlist" {
     const dim = 32;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 32, 29);
@@ -929,7 +1033,7 @@ test "searchFiltered restricts results to the allowlist" {
 
 test "addBatch + searchBatch match serial quality" {
     const dim = 32;
-    const Idx = Index(dim, 8);
+    const Idx = Index(dim, 8, dim);
     const allocator = std.testing.allocator;
 
     var prng = std.Random.DefaultPrng.init(73);
@@ -978,7 +1082,7 @@ test "addBatch + searchBatch match serial quality" {
 
 test "results are sorted by descending score" {
     const dim = 32;
-    const Idx = Index(dim, 4);
+    const Idx = Index(dim, 4, dim);
     const allocator = std.testing.allocator;
 
     var index = try Idx.init(allocator, 16, 5);

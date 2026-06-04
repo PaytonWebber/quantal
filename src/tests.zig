@@ -5,7 +5,7 @@ const index_mod = @import("index.zig");
 
 test "10k vectors: queries allocate exactly zero bytes" {
     const dim = 64;
-    const Idx = index_mod.Index(dim, 8);
+    const Idx = index_mod.Index(dim, 8, dim);
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

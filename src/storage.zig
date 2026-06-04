@@ -1,11 +1,11 @@
 //! .tq index file format: a serialized Index plus one text label per vector.
 //!
 //! Little-endian throughout. Layout:
-//!   magic "TQX4"
-//!   u32 dim, u32 max_edges, u64 vector_count
+//!   magic "TQX5"
+//!   u32 dim, u32 max_edges, u32 routing_bits, u64 vector_count
 //!   u64 ef_construction, u64 entry_id, u32 layer_count, u8 rerank_store
 //!   u8 calib_frozen; when set: dim f32 shifts, dim f32 scales (TQ+)
-//!   rotation matrix: dim*dim f32
+//!   rotation matrix: dim*dim f32; if routing_bits>dim: projection routing_bits*dim f32
 //!   payloads, each: u64 id, chunks_count * 3 bytes (true 3-byte TQ3 packing),
 //!                   f32 bias_scale, f32 bias_shift, f32 renorm_scalar
 //!   rerank store (rotated space):
@@ -20,7 +20,7 @@
 const std = @import("std");
 const index_type = @import("index.zig");
 
-const magic = "TQX4";
+const magic = "TQX5";
 
 pub const Header = struct {
     dim: u32,
@@ -49,13 +49,14 @@ pub fn LoadedIndex(comptime Idx: type) type {
 pub fn readHeader(io: std.Io, path: []const u8) !Header {
     const file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
-    var buf: [20]u8 = undefined;
+    var buf: [24]u8 = undefined;
     const got = try file.readPositionalAll(io, &buf, 0);
     if (got != buf.len or !std.mem.eql(u8, buf[0..4], magic)) return error.NotATqIndex;
     return .{
         .dim = std.mem.readInt(u32, buf[4..8], .little),
         .max_edges = std.mem.readInt(u32, buf[8..12], .little),
-        .vector_count = std.mem.readInt(u64, buf[12..20], .little),
+        // buf[12..16] = routing_bits (not surfaced in the header struct)
+        .vector_count = std.mem.readInt(u64, buf[16..24], .little),
     };
 }
 
@@ -99,6 +100,7 @@ pub fn serialize(
     try w.raw(magic);
     try w.int(u32, dim);
     try w.int(u32, maxEdgesOf(Idx));
+    try w.int(u32, @TypeOf(index.*).routing_bit_count);
     try w.int(u64, index.capacity());
     try w.int(u64, index.routing.ef_construction);
     try w.int(u64, index.routing.entry_id);
@@ -113,6 +115,9 @@ pub fn serialize(
     }
 
     try w.raw(std.mem.sliceAsBytes(index.rotation.rows));
+    if (@TypeOf(index.*).uses_projection) {
+        try w.raw(std.mem.sliceAsBytes(index.projection.rows));
+    }
 
     for (index.payloads.items) |payload| {
         try w.int(u64, payload.id);
@@ -176,6 +181,7 @@ pub fn deserialize(
     if (!std.mem.eql(u8, try r.raw(4), magic)) return error.NotATqIndex;
     if (try r.int(u32) != dim) return error.DimensionMismatch;
     if (try r.int(u32) != maxEdgesOf(Idx)) return error.MaxEdgesMismatch;
+    if (try r.int(u32) != Idx.routing_bit_count) return error.RoutingBitsMismatch;
     const vector_count_u64 = try r.int(u64);
     const ef_construction = try r.int(u64);
     const entry_id = try r.int(u64);
@@ -208,6 +214,8 @@ pub fn deserialize(
 
     var index = Idx{
         .rotation = .{ .rows = rotation_rows },
+        // Empty (freeable) until loaded below, so the errdefer is always safe.
+        .projection = if (Idx.uses_projection) .{ .rows = &.{} } else {},
         .routing = Idx.Graph.init(ef_construction),
         .rotate_buf = try allocator.alloc(f32, dim),
         .calib_buf = try allocator.alloc(f32, dim),
@@ -218,6 +226,15 @@ pub fn deserialize(
     };
     errdefer index.payloads.deinit(allocator);
     errdefer index.routing.deinit(allocator);
+    errdefer if (Idx.uses_projection) {
+        index.projection.deinit(allocator);
+        allocator.free(index.route_buf);
+    };
+    if (Idx.uses_projection) {
+        index.projection = .{ .rows = try allocator.alloc(f32, Idx.routing_bit_count * dim) };
+        index.route_buf = try allocator.alloc(f32, Idx.routing_bit_count);
+        @memcpy(std.mem.sliceAsBytes(index.projection.rows), try r.raw(Idx.routing_bit_count * dim * 4));
+    }
     errdefer index.originals.deinit(allocator);
     errdefer index.sq8_codes.deinit(allocator);
     errdefer index.sq8_scales.deinit(allocator);
@@ -383,7 +400,7 @@ test "serialize/deserialize roundtrip preserves search results" {
     const index_mod = @import("index.zig");
     const heap_mod = @import("heap.zig");
     const dim = 32;
-    const Idx = index_mod.Index(dim, 4);
+    const Idx = index_mod.Index(dim, 4, dim);
     const allocator = std.testing.allocator;
 
     var original = try Idx.init(allocator, 16, 7);
@@ -435,7 +452,7 @@ test "serialize/deserialize roundtrip preserves search results" {
 test "deserialize rejects malformed input without crashing" {
     const index_mod = @import("index.zig");
     const dim = 16;
-    const Idx = index_mod.Index(dim, 4);
+    const Idx = index_mod.Index(dim, 4, dim);
     const allocator = std.testing.allocator;
 
     // A small valid index to corrupt.
@@ -482,26 +499,27 @@ test "deserialize rejects malformed input without crashing" {
         var cut: usize = 0;
         while (cut < valid.len) : (cut += 1) try expectRejected(allocator, valid[0..cut]);
     }
-    // Absurd vector_count (offset 12, u64) -> bounded-count rejection, no
-    // multi-GB allocation attempt.
+    // Header layout: magic(4) dim(4) max_edges(4) routing_bits(4)
+    // vector_count(8)@16 ef(8)@24 entry_id(8)@32 ...
+    // Absurd vector_count -> bounded-count rejection, no multi-GB alloc.
     {
         const b = try allocator.dupe(u8, valid);
         defer allocator.free(b);
-        std.mem.writeInt(u64, b[12..20], std.math.maxInt(u64), .little);
+        std.mem.writeInt(u64, b[16..24], std.math.maxInt(u64), .little);
         try expectRejected(allocator, b);
     }
     // vector_count * dim overflow.
     {
         const b = try allocator.dupe(u8, valid);
         defer allocator.free(b);
-        std.mem.writeInt(u64, b[12..20], std.math.maxInt(u64) / dim + 1, .little);
+        std.mem.writeInt(u64, b[16..24], std.math.maxInt(u64) / dim + 1, .little);
         try expectRejected(allocator, b);
     }
-    // entry_id out of range (offset 28, u64).
+    // entry_id out of range.
     {
         const b = try allocator.dupe(u8, valid);
         defer allocator.free(b);
-        std.mem.writeInt(u64, b[28..36], 99999, .little);
+        std.mem.writeInt(u64, b[32..40], 99999, .little);
         try expectRejected(allocator, b);
     }
     // Every single-byte flip must load-or-reject, never crash.

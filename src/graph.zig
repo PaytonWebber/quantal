@@ -8,10 +8,10 @@ const std = @import("std");
 const bitvec = @import("bitvec.zig");
 const heap_mod = @import("heap.zig");
 
-pub fn GraphNode(comptime dim: usize, comptime max_edges: usize) type {
+pub fn GraphNode(comptime bits: usize, comptime max_edges: usize) type {
     return struct {
         id: u64,
-        bit_vector: bitvec.BitVector(dim),
+        bit_vector: bitvec.BitVector(bits),
         edge_count: u32,
         neighbors: [max_edges]u64,
     };
@@ -75,12 +75,15 @@ pub const TraversalScratch = struct {
     }
 };
 
-pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
+/// `bits` is the routing-code length (the SimHash/sign-bit count), which the
+/// caller decouples from the data dimension; the graph only ever compares
+/// bit vectors by Hamming distance and never sees the original vectors.
+pub fn RoutingGraph(comptime bits: usize, comptime max_edges: usize) type {
     comptime std.debug.assert(max_edges >= 2);
     return struct {
         const Self = @This();
-        pub const Node = GraphNode(dim, max_edges);
-        pub const BitVec = bitvec.BitVector(dim);
+        pub const Node = GraphNode(bits, max_edges);
+        pub const BitVec = bitvec.BitVector(bits);
 
         const Layer = struct {
             nodes: std.ArrayList(Node) = .empty,
@@ -152,19 +155,19 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
 
         /// Inserts a node under a dense id (ids must arrive as 0, 1, 2, ...;
         /// they double as indices into the visited bitset and payload array).
-        pub fn insert(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec) !void {
-            try self.insertWithLevel(allocator, id, bits, self.randomLevel());
+        pub fn insert(self: *Self, allocator: std.mem.Allocator, id: u64, code: BitVec) !void {
+            try self.insertWithLevel(allocator, id, code, self.randomLevel());
         }
 
         /// Serial insert at a pre-drawn level (used by the batched build
         /// when a plan could not be applied).
-        pub fn insertWithLevel(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec, level: usize) !void {
+        pub fn insertWithLevel(self: *Self, allocator: std.mem.Allocator, id: u64, code: BitVec, level: usize) !void {
             std.debug.assert(id == self.node_count);
             try self.build_scratch.ensureCapacity(allocator, self.node_count + 1, self.ef_construction);
 
             const fresh = Node{
                 .id = id,
-                .bit_vector = bits,
+                .bit_vector = code,
                 .edge_count = 0,
                 .neighbors = @splat(0),
             };
@@ -181,14 +184,14 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             var cur = self.entry_id;
             var l = old_top;
             while (l > level) : (l -= 1) {
-                cur = greedyDescend(&self.layers.items[l], &bits, cur, &self.build_scratch.stats);
+                cur = greedyDescend(&self.layers.items[l], &code, cur, &self.build_scratch.stats);
             }
 
             var connect = @min(level, old_top) + 1;
             while (connect > 0) {
                 connect -= 1;
                 const layer = &self.layers.items[connect];
-                const found = searchLayer(layer, &bits, cur, self.ef_construction, &self.build_scratch);
+                const found = searchLayer(layer, &code, cur, self.ef_construction, &self.build_scratch);
 
                 try layer.addNode(allocator, fresh);
                 const new_node = layer.nodePtrMut(id);
@@ -244,7 +247,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
         /// Read-only insertion planning against the current graph. Returns
         /// an unplanned result (caller must use the serial `insert`) when
         /// the graph is empty or the drawn level needs layer promotion.
-        pub fn planInsert(self: *const Self, bits: *const BitVec, level: usize, scratch: *TraversalScratch) InsertPlan {
+        pub fn planInsert(self: *const Self, code: *const BitVec, level: usize, scratch: *TraversalScratch) InsertPlan {
             if (self.node_count == 0) return .{};
             const old_top = self.layers.items.len - 1;
             if (level > old_top or level >= plan_max_layers) return .{};
@@ -252,7 +255,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             var cur = self.entry_id;
             var l = old_top;
             while (l > level) : (l -= 1) {
-                cur = greedyDescend(&self.layers.items[l], bits, cur, &scratch.stats);
+                cur = greedyDescend(&self.layers.items[l], code, cur, &scratch.stats);
             }
 
             var plan = InsertPlan{ .planned = true, .level = level };
@@ -260,7 +263,7 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
             while (connect > 0) {
                 connect -= 1;
                 const layer = &self.layers.items[connect];
-                const found = searchLayer(layer, bits, cur, self.ef_construction, scratch);
+                const found = searchLayer(layer, code, cur, self.ef_construction, scratch);
                 plan.counts[connect] = @intCast(selectNeighbors(layer, found, &plan.neighbors[connect]));
                 if (found.len > 0) cur = found[0].id;
             }
@@ -270,11 +273,11 @@ pub fn RoutingGraph(comptime dim: usize, comptime max_edges: usize) type {
         /// Applies a plan produced by `planInsert`. The graph may have grown
         /// since planning (neighbor ids stay valid; within-batch nodes are
         /// simply invisible to each other's plans).
-        pub fn commitPlanned(self: *Self, allocator: std.mem.Allocator, id: u64, bits: BitVec, plan: InsertPlan) !void {
+        pub fn commitPlanned(self: *Self, allocator: std.mem.Allocator, id: u64, code: BitVec, plan: InsertPlan) !void {
             std.debug.assert(plan.planned and id == self.node_count);
             const fresh = Node{
                 .id = id,
-                .bit_vector = bits,
+                .bit_vector = code,
                 .edge_count = 0,
                 .neighbors = @splat(0),
             };

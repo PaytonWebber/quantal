@@ -1,8 +1,9 @@
 //! C-compatible API over a concrete Index instantiation.
 //!
-//! The dimension and graph degree are fixed at compile time via the
-//! `-Dc-dim` / `-Dc-max-edges` build options (defaults: 1536 / 32).
-//! See include/quantajump.h for the matching prototypes.
+//! The dimension, graph degree, and routing-code length are fixed at compile
+//! time via `-Dc-dim` / `-Dc-max-edges` / `-Dc-routing-bits` (defaults:
+//! 1536 / 32 / =c-dim). Raise c-routing-bits above c-dim for low-dimensional
+//! datasets. See include/quantajump.h for the matching prototypes.
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -11,8 +12,10 @@ const storage = @import("storage.zig");
 
 pub const c_dim = build_options.c_dim;
 pub const c_max_edges = build_options.c_max_edges;
+// 0 means "default to c_dim" (resolved in build.zig).
+pub const c_routing_bits = if (build_options.c_routing_bits == 0) c_dim else build_options.c_routing_bits;
 
-const CIndex = index_mod.Index(c_dim, c_max_edges);
+const CIndex = index_mod.Index(c_dim, c_max_edges, c_routing_bits);
 const allocator = std.heap.smp_allocator;
 
 const max_k = 256;

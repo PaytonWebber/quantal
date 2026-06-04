@@ -97,7 +97,7 @@ const Stopwatch = struct {
 };
 
 fn runBench(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, dataset: *const Dataset, config: Config) !void {
-    const Idx = qj.Index(dim, max_edges);
+    const Idx = qj.Index(dim, max_edges, dim);
 
     var timer = Stopwatch.begin(io);
     var index = try Idx.init(allocator, config.ef_construction, config.seed);
