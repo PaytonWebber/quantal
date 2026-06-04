@@ -106,6 +106,13 @@ directional, not a leaderboard. The C ABI, Python package, and framework
 wrappers are tested; PyPI/crates publishing and the multi-platform CI wheels
 are wired but not yet released.
 
+## How this was built
+
+The research direction, architecture, and benchmarking are human. The
+implementation (the Zig core, the Python bindings, the framework wrappers) was
+written with heavy AI assistance. Every number in this README was actually
+measured, and the generated code was reviewed and tested.
+
 ## References
 
 The methods quantal builds on:
