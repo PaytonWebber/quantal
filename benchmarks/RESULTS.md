@@ -176,6 +176,25 @@ on both axes. Cost: build 54s→106s (the projection), routing code
 At d≥768 the default (routing_bits=dim) is unchanged and optimal, so the
 high-dim results above are untouched.
 
+### Auto-default (routing_bits=0): the win with zero tuning
+
+`autoRoutingBits` now picks the routing-code length from the dimension
+(shipped; the default build is `-Dc-routing-bits=0` = auto). For glove-100
+it resolves to 512. Default build, no flags:
+
+| m | recall@10 | QPS (MT) |
+|---|---|---|
+| 512 | 0.828 | 18,621 |
+| 1024 | **0.871** | 9,331 |
+
+So the *out-of-the-box* build now beats turbovec 4-bit (0.858) on
+glove-100, where the old 1-bit default capped at 0.597. The hand-tuned
+rb=1024 reaches 0.900 — the auto pick (512) is a hair conservative at
+1.18M (the table is calibrated on 200k routing recall; larger corpora can
+take the next tier), but it wins with no user input and `-Dc-routing-bits`
+overrides when wanted. At d≥768 auto resolves to dim, so embedding
+workloads are byte-identical to the tuned high-dim results.
+
 ## Multi-bit routing experiment — the low-dim fix, validated
 
 Hypothesis: glove-100's poor recall is the 1-bit-per-dimension routing
