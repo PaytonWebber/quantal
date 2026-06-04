@@ -36,17 +36,21 @@ sweeps are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 ## Install
 
-No PyPI release yet. From a source checkout with [Zig](https://ziglang.org)
-on your PATH:
-
 ```bash
-pip install -e python
+pip install quantaldb
 ```
 
-The native library is compiled per dimension and built on first use, so
-`Index(dim=384)` just works. To use it without a toolchain, build a wheel
-(`cd python && python build_libs.py && python -m build --wheel`) — it bundles
-prebuilt libraries for the common embedding dimensions.
+The package is `quantaldb`; the import is `quantal`:
+
+```python
+from quantal import Index
+```
+
+Wheels bundle prebuilt libraries for the common embedding dimensions
+(256/384/512/768/1024/1536/3072) on Linux, macOS (Apple Silicon), and Windows.
+For other dimensions, install from a source checkout with
+[Zig](https://ziglang.org) 0.16 on your PATH (`pip install -e python`) and the
+right library is built on first use.
 
 ## Usage
 

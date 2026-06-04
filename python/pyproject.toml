@@ -2,8 +2,9 @@
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
+# Distribution name "quantaldb"; the import package is "quantal".
 [project]
-name = "quantal"
+name = "quantaldb"
 version = "0.1.0"
 description = "Embedded two-stage cascading vector index (1-bit graph routing + 3-bit TurboQuant + exact rerank)"
 readme = "README.md"
