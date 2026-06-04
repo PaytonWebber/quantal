@@ -67,6 +67,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(route_exe);
 
+    const routing_exp = b.addExecutable(.{
+        .name = "routing-exp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/routing_experiment.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "quantajump", .module = mod }},
+        }),
+    });
+    const run_routing_exp = b.addRunArtifact(routing_exp);
+    if (b.args) |args| run_routing_exp.addArgs(args);
+    b.step("routing-exp", "Run the multi-bit routing experiment").dependOn(&run_routing_exp.step);
+
     const tests = b.addTest(.{ .root_module = mod });
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");

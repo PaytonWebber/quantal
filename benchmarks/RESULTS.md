@@ -165,6 +165,43 @@ ANN library." Lifting the low-dim regime needs multi-bit routing codes
 rather than 1-bit Hamming — a routing-layer change that leaves the
 high-dim path untouched.
 
+## Multi-bit routing experiment — the low-dim fix, validated
+
+Hypothesis: glove-100's poor recall is the 1-bit-per-dimension routing
+ceiling (100 dims -> 100-bit Hamming code), not anything fundamental.
+Test: replace the d sign bits with a B-bit SimHash code (sign of B
+i.i.d. Gaussian projections), decoupling routing-code length from
+dimension, and measure *routing recall* alone — the fraction of the
+exact top-10 in the m-candidate set BEFORE any rerank (the ceiling on
+final recall). glove-100, 200k vectors, 1k queries; one seed; only B
+varies. Reproduce: `zig build routing-exp -Doptimize=ReleaseFast -- ...`
+(benchmarks/routing_experiment.zig).
+
+| routing bits | rr@10 (m=128) | rr@10 (m=512) | build (200k) |
+|---|---|---|---|
+| 100 (today, 1-bit/dim) | 0.285 | 0.450 | 30.0s |
+| 256 | 0.566 | 0.761 | 32.1s |
+| 512 | 0.740 | 0.900 | 34.7s |
+| **1024** | 0.836 | **0.948** | 47.8s |
+| 2048 | 0.880 | 0.966 | 66.7s |
+
+Confirmed: routing recall scales directly with code length, exactly as
+SimHash theory predicts (Hamming over B sign bits estimates angular
+distance with variance ~1/B). At **B=1024, routing recall@10 = 0.948**
+(m=512) — and that's the pre-rerank ceiling, so the full pipeline (exact
+stage-3 on top) would reach ~0.948 on glove-100, **beating turbovec's
+0.858** where today we manage only 0.597. Cost is modest: build +60% at
+B=1024, a B×d projection per query (negligible), and a 128-byte routing
+code per vector (vs the 147 MiB sq8 store at 1M, immaterial).
+
+This makes the low-dim weakness a tunable, not a wall: expose
+`routing_bits` as a build parameter (default = dim, preserving the
+high-dim path exactly; raise it for low-dim datasets). The 1-bit code
+that wins at d=1536 is simply too short at d=100 — and lengthening it is
+cheap. Production integration (threading routing_bits through Index /
+graph / storage / C-API + a fresh d×B projection alongside the existing
+rotation) is the remaining work; the experiment confirms it is worth doing.
+
 ## SQ8 rerank store (now the default)
 
 int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:
