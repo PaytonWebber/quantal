@@ -176,13 +176,19 @@ pub fn deserialize(
     if (!std.mem.eql(u8, try r.raw(4), magic)) return error.NotATqIndex;
     if (try r.int(u32) != dim) return error.DimensionMismatch;
     if (try r.int(u32) != maxEdgesOf(Idx)) return error.MaxEdgesMismatch;
-    const vector_count = try r.int(u64);
+    const vector_count_u64 = try r.int(u64);
     const ef_construction = try r.int(u64);
     const entry_id = try r.int(u64);
     const layer_count = try r.int(u32);
     const rerank_store = std.enums.fromInt(index_type.RerankStore, try r.int(u8)) orelse {
         return error.CorruptIndex;
     };
+
+    // Each vector contributes at least a u64 id + its chunks to the payload
+    // section, so it can never exceed file size / 8. This caps every
+    // subsequent vector_count-sized allocation at ~the file size.
+    const vector_count: usize = try r.boundedCount(vector_count_u64, 8);
+    if (vector_count > 0 and entry_id >= vector_count_u64) return error.CorruptIndex;
 
     const calib_frozen = (try r.int(u8)) != 0;
     var calib_shift: []f32 = &.{};
@@ -215,10 +221,13 @@ pub fn deserialize(
     errdefer index.originals.deinit(allocator);
     errdefer index.sq8_codes.deinit(allocator);
     errdefer index.sq8_scales.deinit(allocator);
+    errdefer index.id_to_internal.deinit(allocator);
+    errdefer index.tombstones.deinit(allocator);
     errdefer allocator.free(index.rotate_buf);
+    errdefer allocator.free(index.calib_buf);
 
-    try index.payloads.ensureTotalCapacityPrecise(allocator, @intCast(vector_count));
-    for (0..@intCast(vector_count)) |_| {
+    try index.payloads.ensureTotalCapacityPrecise(allocator, vector_count);
+    for (0..vector_count) |_| {
         var payload: Idx.Payload = undefined;
         payload.id = try r.int(u64);
         for (&payload.chunks) |*chunk| {
@@ -231,7 +240,8 @@ pub fn deserialize(
     }
 
     index.rerank_store = rerank_store;
-    const coord_count: usize = @intCast(vector_count * dim);
+    // vector_count is already bounded by file size, so this cannot overflow.
+    const coord_count: usize = std.math.mul(usize, vector_count, dim) catch return error.CorruptIndex;
     switch (rerank_store) {
         .none => {},
         .fp32 => {
@@ -243,38 +253,44 @@ pub fn deserialize(
             try index.sq8_codes.ensureTotalCapacityPrecise(allocator, coord_count);
             index.sq8_codes.items.len = coord_count;
             @memcpy(std.mem.sliceAsBytes(index.sq8_codes.items), try r.raw(coord_count));
-            const n: usize = @intCast(vector_count);
-            try index.sq8_scales.ensureTotalCapacityPrecise(allocator, n);
-            index.sq8_scales.items.len = n;
-            @memcpy(std.mem.sliceAsBytes(index.sq8_scales.items), try r.raw(n * 4));
+            try index.sq8_scales.ensureTotalCapacityPrecise(allocator, vector_count);
+            index.sq8_scales.items.len = vector_count;
+            @memcpy(std.mem.sliceAsBytes(index.sq8_scales.items), try r.raw(vector_count * 4));
         },
     }
 
     for (0..layer_count) |layer_idx| {
         try index.routing.appendLayerForLoad(allocator);
-        const node_count = try r.int(u64);
-        for (0..@intCast(node_count)) |_| {
+        // A node consumes at least id(8) + bit vector + edge_count(4) bytes.
+        const min_node_bytes = 8 + @sizeOf(@TypeOf(@as(Idx.Graph.Node, undefined).bit_vector.words)) + 4;
+        const node_count = try r.boundedCount(try r.int(u64), min_node_bytes);
+        for (0..node_count) |_| {
             var node: Idx.Graph.Node = undefined;
             node.id = try r.int(u64);
+            // Ids index the dense base layer and the payload array directly;
+            // an out-of-range id would become an OOB access at query time.
+            if (node.id >= vector_count) return error.CorruptIndex;
             @memcpy(std.mem.sliceAsBytes(&node.bit_vector.words), try r.raw(@sizeOf(@TypeOf(node.bit_vector.words))));
             node.edge_count = try r.int(u32);
             if (node.edge_count > node.neighbors.len) return error.CorruptIndex;
             node.neighbors = @splat(0);
             for (node.neighbors[0..node.edge_count]) |*neighbor_id| {
                 neighbor_id.* = try r.int(u64);
+                if (neighbor_id.* >= vector_count) return error.CorruptIndex;
             }
             try index.routing.appendNodeForLoad(allocator, layer_idx, node);
         }
     }
     index.routing.entry_id = entry_id;
-    index.routing.node_count = @intCast(vector_count);
+    index.routing.node_count = vector_count;
 
     const deleted_count = try r.int(u64);
     if (deleted_count > 0) {
-        try index.tombstones.resize(allocator, @intCast(vector_count), false);
+        if (deleted_count > vector_count_u64) return error.CorruptIndex;
+        try index.tombstones.resize(allocator, vector_count, false);
         for (0..@intCast(deleted_count)) |_| {
             const internal = try r.int(u64);
-            if (internal >= vector_count) return error.CorruptIndex;
+            if (internal >= vector_count_u64) return error.CorruptIndex;
             index.tombstones.set(@intCast(internal));
         }
     }
@@ -332,10 +348,24 @@ const Reader = struct {
     bytes: []const u8,
     pos: usize = 0,
 
+    fn remaining(r: *const Reader) usize {
+        return r.bytes.len - r.pos;
+    }
+
     fn raw(r: *Reader, len: usize) ![]const u8 {
-        if (r.pos + len > r.bytes.len) return error.CorruptIndex;
+        // Subtraction form avoids the r.pos + len overflow a malformed
+        // length could trigger.
+        if (len > r.remaining()) return error.CorruptIndex;
         defer r.pos += len;
         return r.bytes[r.pos..][0..len];
+    }
+
+    /// Rejects a count that cannot possibly be backed by the remaining
+    /// bytes (each item consumes at least `min_item_bytes`), so the file
+    /// can never drive a speculative allocation larger than itself.
+    fn boundedCount(r: *const Reader, count: u64, min_item_bytes: usize) !usize {
+        if (count > r.remaining() / @max(min_item_bytes, 1)) return error.CorruptIndex;
+        return @intCast(count);
     }
 
     fn int(r: *Reader, comptime T: type) !T {
@@ -399,5 +429,91 @@ test "serialize/deserialize roundtrip preserves search results" {
     for (out_a[0..n_a], out_b[0..n_b]) |a, b| {
         try std.testing.expectEqual(a.id, b.id);
         try std.testing.expectEqual(a.score, b.score);
+    }
+}
+
+test "deserialize rejects malformed input without crashing" {
+    const index_mod = @import("index.zig");
+    const dim = 16;
+    const Idx = index_mod.Index(dim, 4);
+    const allocator = std.testing.allocator;
+
+    // A small valid index to corrupt.
+    var original = try Idx.init(allocator, 8, 1);
+    defer original.deinit(allocator);
+    var labels: [12][]const u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(5);
+    const rand = prng.random();
+    for (0..12) |i| {
+        var coords: [dim]f32 = undefined;
+        for (&coords) |*c| c.* = rand.floatNorm(f32);
+        try original.add(allocator, i, &coords);
+        labels[i] = "x";
+    }
+    const valid = try serialize(Idx, allocator, &original, &labels);
+    defer allocator.free(valid);
+
+    // Sanity: the untouched bytes load.
+    {
+        var ok = try deserialize(Idx, allocator, valid);
+        ok.deinit(allocator);
+    }
+
+    // Helper: a corruption must surface as an error, never UB. With the
+    // testing allocator any leaked allocation on the error path also fails.
+    const expectRejected = struct {
+        fn run(a: std.mem.Allocator, bytes: []const u8) !void {
+            if (deserialize(Idx, a, bytes)) |*loaded| {
+                @constCast(loaded).deinit(a);
+                return error.ShouldHaveRejected;
+            } else |_| {}
+        }
+    }.run;
+
+    // Bad magic.
+    {
+        const b = try allocator.dupe(u8, valid);
+        defer allocator.free(b);
+        b[0] = 'Z';
+        try std.testing.expectError(error.NotATqIndex, deserialize(Idx, allocator, b));
+    }
+    // Truncation at every prefix length must be rejected (never read OOB).
+    {
+        var cut: usize = 0;
+        while (cut < valid.len) : (cut += 1) try expectRejected(allocator, valid[0..cut]);
+    }
+    // Absurd vector_count (offset 12, u64) -> bounded-count rejection, no
+    // multi-GB allocation attempt.
+    {
+        const b = try allocator.dupe(u8, valid);
+        defer allocator.free(b);
+        std.mem.writeInt(u64, b[12..20], std.math.maxInt(u64), .little);
+        try expectRejected(allocator, b);
+    }
+    // vector_count * dim overflow.
+    {
+        const b = try allocator.dupe(u8, valid);
+        defer allocator.free(b);
+        std.mem.writeInt(u64, b[12..20], std.math.maxInt(u64) / dim + 1, .little);
+        try expectRejected(allocator, b);
+    }
+    // entry_id out of range (offset 28, u64).
+    {
+        const b = try allocator.dupe(u8, valid);
+        defer allocator.free(b);
+        std.mem.writeInt(u64, b[28..36], 99999, .little);
+        try expectRejected(allocator, b);
+    }
+    // Every single-byte flip must load-or-reject, never crash.
+    {
+        var i: usize = 0;
+        while (i < valid.len) : (i += 1) {
+            const b = try allocator.dupe(u8, valid);
+            defer allocator.free(b);
+            b[i] ^= 0xFF;
+            if (deserialize(Idx, allocator, b)) |*loaded| {
+                @constCast(loaded).deinit(allocator);
+            } else |_| {}
+        }
     }
 }
