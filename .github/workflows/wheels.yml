@@ -82,7 +82,9 @@ jobs:
           # venv python lives in bin/ on Unix, Scripts/ on Windows.
           VPY=sv/bin/python; [ -f sv/Scripts/python.exe ] && VPY=sv/Scripts/python.exe
           "$VPY" -m pip install numpy
-          "$VPY" -m pip install --no-index --find-links python/dist quantal
+          # Install the built wheel directly so this doesn't depend on the
+          # distribution name (quantaldb) vs the import name (quantal).
+          "$VPY" -m pip install python/dist/*.whl
           "$VPY" -c "import numpy as np; from quantal import Index; i=Index(dim=768); i.add(np.random.rand(100,768).astype('float32')); print('ok', len(i))"
 
       - uses: actions/upload-artifact@v4
