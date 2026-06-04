@@ -66,8 +66,12 @@ jobs:
       - name: Smoke test (toolchain-free)
         shell: bash
         run: |
-          python -m venv /tmp/v && /tmp/v/bin/python -m pip install numpy python/dist/*.whl
-          /tmp/v/bin/python -c "import numpy as np; from quantal import Index; i=Index(dim=768); i.add(np.random.rand(100,768).astype('float32')); print('ok', len(i))"
+          python -m venv sv
+          # venv python lives in bin/ on Unix, Scripts/ on Windows.
+          VPY=sv/bin/python; [ -f sv/Scripts/python.exe ] && VPY=sv/Scripts/python.exe
+          "$VPY" -m pip install numpy
+          "$VPY" -m pip install --no-index --find-links python/dist quantal
+          "$VPY" -c "import numpy as np; from quantal import Index; i=Index(dim=768); i.add(np.random.rand(100,768).astype('float32')); print('ok', len(i))"
 
       - uses: actions/upload-artifact@v4
         with:

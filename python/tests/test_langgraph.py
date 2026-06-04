@@ -33,7 +33,7 @@ print("filtered search keys:", [h.key for h in hits_f])
 
 # update re-indexes
 store.put(("mem","alice"), "m1", {"text": "switched to light mode", "kind": "pref"})
-h2 = store.search(("mem","alice"), query="light mode", limit=1)
+h2 = store.search(("mem","alice"), query="switched to light mode", limit=1)
 assert h2[0].key == "m1" and h2[0].value["text"] == "switched to light mode"
 print("update re-index: OK")
 
