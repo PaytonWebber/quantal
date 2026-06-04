@@ -212,6 +212,55 @@ The pre-rerank ceiling measured here (0.948) was confirmed end-to-end —
 the full pipeline at routing_bits=1024 reaches recall@10 0.900 on the
 full 1.18M glove-100 set, beating turbovec (see the glove section above).
 
+## Dimension-crossover sweep (GloVe family, d = 25/50/100/200)
+
+Same source, same metric (angular), 200k vectors, 1k queries — dimension
+is the only variable. Routing recall@10 before rerank, `zig build
+routing-exp`. The `bits=dim` row is the 1-bit default (proxied by a
+dim-bit Gaussian SimHash); the rest is the multi-bit fix.
+
+routing recall@10 at m=512:
+
+| data dim | bits=dim (default) | 256 | 512 | 1024 | ≈bits for 0.90 |
+|---|---|---|---|---|---|
+| 25  | 0.340 | 0.985 | 0.999 | 1.000 | ~128 |
+| 50  | 0.415 | 0.917 | 0.979 | 0.993 | ~256 |
+| 100 | 0.450 | 0.761 | 0.900 | 0.948 | ~512 |
+| 200 | 0.506 | 0.588 | 0.777 | 0.877 | >1024 |
+
+Two findings:
+
+1. **The default (bits=dim) is mediocre across this whole range** — routing
+   recall@10 rises only 0.34→0.51 from d=25 to d=200. So the crossover to
+   "default is sufficient" sits well above d=200 (DBpedia d=1536 is where
+   the default's full-pipeline recall1@1 reaches 0.93+). For low-to-mid
+   dimensions, raising routing_bits helps substantially.
+
+2. **Bits needed for a target recall scale ~linearly with dimension** — the
+   ≈0.90 column lands near 5× the data dimension (d=25→~128, d=50→~256,
+   d=100→~512, d=200→>1024). Lower dimensions also need fewer *absolute*
+   bits and saturate faster (256 bits already nails d=25 at 0.985 but gives
+   d=200 only 0.59), because there is less angular structure to resolve.
+   (n-dependent: at the full 1.18M, d=100 wanted ~1024, not 512 — more
+   vectors = more distractors = more bits or larger m.)
+
+### Recommended routing_bits
+
+A practical default by data dimension (verified end-to-end on glove-100,
+where rb=1024 beat turbovec — see above):
+
+| data dim | routing_bits |
+|---|---|
+| ≤ 64   | 256 |
+| 65–128 | 512 |
+| 129–256 | 1024 |
+| ≥ 768 (embeddings) | dim (the default; already optimal) |
+
+i.e. roughly `max(dim, 4–8× dim capped at ~1024)` for low dim, `dim` for
+high dim. A future `routing_bits = 0 → auto` heuristic at the build/C-ABI
+layer could apply this without user tuning; today it is an explicit
+comptime / `-Dc-routing-bits` choice.
+
 ## SQ8 rerank store (now the default)
 
 int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:

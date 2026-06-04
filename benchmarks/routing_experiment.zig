@@ -1,24 +1,23 @@
-//! Isolated routing-quality experiment: does increasing the routing-code
-//! bit count B (decoupled from the data dimension via random projection)
-//! improve recall on low-dimensional data?
+//! Isolated routing-quality experiment / dimension-crossover sweep: how does
+//! increasing the routing-code bit count B (decoupled from the data dimension
+//! via random projection) affect recall, and where does the B=dim default
+//! start failing as the data dimension drops?
 //!
 //! Measures *routing recall* only — the fraction of the exact top-10 that
 //! land in the m-candidate set the graph returns, BEFORE any rerank. That
-//! isolates the variable in question (the 1-bit-per-dim ceiling) from the
-//! quantization/rerank stages.
+//! isolates the routing stage from quantization/rerank.
 //!
-//!   zig build routing-exp -Doptimize=ReleaseFast -- \
-//!       /tmp/glove_trn200k.fvecs /tmp/glove_tst1k.fvecs /tmp/glove_gt1k.ivecs
+//!   zig build routing-exp -Doptimize=ReleaseFast -- <dim> <trn.fvecs> <tst.fvecs> <gt.ivecs>
 
 const std = @import("std");
 const qj = @import("quantajump");
 
-const data_dim = 100;
 const max_edges = 32;
 const ef_construction = 200;
 const m_values = [_]usize{ 128, 512 };
-const bit_counts = [_]usize{ 100, 256, 512, 1024, 2048 };
 const top_k = 10;
+// GloVe family — angular, same source, dimension is the only variable.
+const supported_dims = [_]usize{ 25, 50, 100, 200 };
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -28,31 +27,43 @@ pub fn main(init: std.process.Init) !void {
     defer args.deinit(allocator);
     var it = init.minimal.args.iterate();
     while (it.next()) |a| try args.append(allocator, a);
-    if (args.items.len < 4) {
-        std.debug.print("usage: routing-exp <train.fvecs> <queries.fvecs> <gt.ivecs>\n", .{});
+    if (args.items.len < 5) {
+        std.debug.print("usage: routing-exp <dim> <trn.fvecs> <tst.fvecs> <gt.ivecs>\n", .{});
         std.process.exit(1);
     }
+    const dim = try std.fmt.parseInt(usize, args.items[1], 10);
 
-    const train = try loadFvecs(allocator, io, args.items[1], data_dim);
+    inline for (supported_dims) |data_dim| {
+        if (data_dim == dim) return runForDim(data_dim, allocator, io, args.items);
+    }
+    std.debug.print("unsupported dim {d}; compiled for {any}\n", .{ dim, supported_dims });
+    std.process.exit(1);
+}
+
+fn runForDim(comptime data_dim: usize, allocator: std.mem.Allocator, io: std.Io, args: []const []const u8) !void {
+    const train = try loadFvecs(allocator, io, args[2], data_dim);
     defer allocator.free(train);
-    const queries = try loadFvecs(allocator, io, args.items[2], data_dim);
+    const queries = try loadFvecs(allocator, io, args[3], data_dim);
     defer allocator.free(queries);
-    const gt = try loadIvecs(allocator, io, args.items[3], top_k);
+    const gt = try loadIvecs(allocator, io, args[4], top_k);
     defer allocator.free(gt);
 
     const n = train.len / data_dim;
     const nq = queries.len / data_dim;
-    std.debug.print("train {d}x{d}, queries {d}, routing recall@{d} (candidates before rerank)\n\n", .{ n, data_dim, nq, top_k });
+    std.debug.print("\nd={d}: train {d}, queries {d}, routing recall@{d} (candidates before rerank)\n", .{ data_dim, n, nq, top_k });
     std.debug.print("{s:>6}", .{"bits"});
     for (m_values) |m| std.debug.print("   rr@10 m={d:<4}", .{m});
     std.debug.print("   build_s\n", .{});
 
+    // B=dim is the (proxy for the) current default; larger B is the fix.
+    const bit_counts = [_]usize{ data_dim, 256, 512, 1024 };
     inline for (bit_counts) |bits| {
-        try runConfig(bits, allocator, io, train, queries, gt, n, nq);
+        try runConfig(data_dim, bits, allocator, io, train, queries, gt, n, nq);
     }
 }
 
 fn runConfig(
+    comptime data_dim: usize,
     comptime bits: usize,
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -81,7 +92,7 @@ fn runConfig(
 
     var timer = try Stopwatch.begin(io);
     for (0..n) |i| {
-        const code = projectCode(BitVec, bits, proj, train[i * data_dim ..][0..data_dim], projected);
+        const code = projectCode(data_dim, BitVec, bits, proj, train[i * data_dim ..][0..data_dim], projected);
         try graph.insert(allocator, i, code);
     }
     const build_s = timer.readSeconds(io);
@@ -94,7 +105,7 @@ fn runConfig(
     for (m_values) |m| {
         var hits: usize = 0;
         for (0..nq) |q| {
-            const code = projectCode(BitVec, bits, proj, queries[q * data_dim ..][0..data_dim], projected);
+            const code = projectCode(data_dim, BitVec, bits, proj, queries[q * data_dim ..][0..data_dim], projected);
             const candidates = graph.route(&code, m, &scratch);
             for (gt[q * top_k ..][0..top_k]) |true_id| {
                 for (candidates) |c| {
@@ -111,7 +122,7 @@ fn runConfig(
     std.debug.print("   {d:>7.1}\n", .{build_s});
 }
 
-fn projectCode(comptime BitVec: type, comptime bits: usize, proj: []const f32, x: []const f32, scratch: []f32) BitVec {
+fn projectCode(comptime data_dim: usize, comptime BitVec: type, comptime bits: usize, proj: []const f32, x: []const f32, scratch: []f32) BitVec {
     for (0..bits) |b| {
         scratch[b] = qj.rotation.dot(proj[b * data_dim ..][0..data_dim], x);
     }
