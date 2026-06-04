@@ -48,21 +48,20 @@ class QuantaJump(BaseANN):
 
     def fit(self, X):
         X = self._prep(X)
-        self._index = Index(self._lib, ef_construction=self._ef)
-        ids = np.arange(X.shape[0], dtype=np.uint64)
-        self._index.add(ids, X)  # uses all cores
+        self._index = Index(lib_path=self._lib, ef_construction=self._ef)
+        self._index.add(X)  # auto-assigns ids 0..n-1, uses all cores
 
     def set_query_arguments(self, m):
         self._m = int(m)
 
     def query(self, v, n):
         v = self._prep(v.reshape(1, -1))
-        _, ids, counts = self._index.search(v, k=n, m=self._m, threads=1)
+        _, ids, counts = self._index.search_batch(v, k=n, m=self._m, threads=1)
         return ids[0, : counts[0]]
 
     def batch_query(self, X, n):
         X = self._prep(X)
-        scores, ids, counts = self._index.search(X, k=n, m=self._m, threads=os.cpu_count())
+        scores, ids, counts = self._index.search_batch(X, k=n, m=self._m, threads=os.cpu_count())
         self._batch = (ids, counts)
 
     def get_batch_results(self):

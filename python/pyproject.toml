@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantajump"
+version = "0.1.0"
+description = "Embedded two-stage cascading vector index (1-bit graph routing + 3-bit TurboQuant + exact rerank)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.3"]
+
+[tool.setuptools]
+packages = ["quantajump"]
+
+# NOTE: this packages the pure-Python ctypes layer. The native library is
+# resolved at runtime — built on demand from a source checkout (zig on PATH),
+# or supplied via the QUANTAJUMP_LIB env var. Shipping prebuilt per-dimension
+# wheels (cibuildwheel + `zig build`) is the remaining packaging step.

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: quantajump
+Version: 0.1.0
+Summary: Embedded two-stage cascading vector index (1-bit graph routing + 3-bit TurboQuant + exact rerank)
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21
+Provides-Extra: langchain
+Requires-Dist: langchain-core>=0.3; extra == "langchain"
