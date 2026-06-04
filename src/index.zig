@@ -47,6 +47,11 @@ pub fn autoRoutingBits(dim: usize) usize {
 /// Lindenstrauss reduction that trades a little routing recall for a shorter
 /// code (cheaper Hamming + projection) on high-dimensional data. See
 /// benchmarks/RESULTS.md.
+///
+/// Concurrency: this follows the single-writer / many-reader contract.
+/// Concurrent searches are fine (searchBatch runs them in parallel), but a
+/// mutation (add, addBatch, remove, freeze) must not overlap with any search
+/// or other mutation.
 pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bits: usize) type {
     comptime std.debug.assert(routing_bits >= 1);
     return struct {
@@ -175,8 +180,11 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bi
             return true;
         }
 
+        /// Adds one vector. Errors (leaving the index unchanged) on a
+        /// wrong-length slice or an id that is already present.
         pub fn add(self: *Self, allocator: std.mem.Allocator, id: u64, coords: []const f32) !void {
-            std.debug.assert(coords.len == dim);
+            if (coords.len != dim) return error.DimensionMismatch;
+            if (self.id_to_internal.contains(id)) return error.DuplicateId;
             self.rotation.apply(coords, self.rotate_buf);
 
             if (self.tq_plus and !self.calib_frozen) {
@@ -287,6 +295,19 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bi
             self.live_count += 1;
         }
 
+        /// Rejects a batch (before any mutation) if any id is already indexed
+        /// or appears twice within the batch. Uses a scratch set so the check
+        /// is O(n), not O(n^2).
+        fn validateNewIds(self: *Self, allocator: std.mem.Allocator, ids: []const u64) !void {
+            var seen: std.AutoHashMapUnmanaged(u64, void) = .empty;
+            defer seen.deinit(allocator);
+            try seen.ensureTotalCapacity(allocator, @intCast(ids.len));
+            for (ids) |id| {
+                if (self.id_to_internal.contains(id)) return error.DuplicateId;
+                if (seen.fetchPutAssumeCapacity(id, {}) != null) return error.DuplicateId;
+            }
+        }
+
         fn appendRerankRecord(self: *Self, allocator: std.mem.Allocator, rotated: []const f32) !void {
             switch (self.rerank_store) {
                 .none => {},
@@ -309,6 +330,11 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bi
         /// do not see each other while their graph neighbors are planned
         /// (batch size grows with the graph, so early inserts stay serial).
         /// Not allowed while a TQ+ calibration buffer is still open.
+        ///
+        /// Ids and dimensions are validated up front, so a wrong-length
+        /// `coords` or any duplicate id (within the batch or already in the
+        /// index) is rejected before any vector is inserted. Allocation
+        /// failure mid-batch is not rolled back, however.
         pub fn addBatch(
             self: *Self,
             allocator: std.mem.Allocator,
@@ -316,8 +342,9 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bi
             coords: []const f32,
             thread_count: usize,
         ) !void {
-            std.debug.assert(coords.len == ids.len * dim);
             std.debug.assert(!self.tq_plus or self.calib_frozen);
+            if (coords.len != ids.len * dim) return error.DimensionMismatch;
+            try self.validateNewIds(allocator, ids);
             const threads = @max(thread_count, 1);
             const max_batch: usize = 1024;
 
@@ -901,6 +928,44 @@ test "sq8 and fp32 rerank stores agree on results" {
         try std.testing.expectApproxEqRel(out_a[0].score, out_b[0].score, 0.01);
     }
     try std.testing.expect(agree >= 19);
+}
+
+test "edge cases: duplicate id, dimension mismatch, all-deleted, k>m" {
+    const dim = 32;
+    const Idx = Index(dim, 8, dim);
+    const allocator = std.testing.allocator;
+
+    var index = try Idx.init(allocator, 32, 1);
+    defer index.deinit(allocator);
+
+    var prng = std.Random.DefaultPrng.init(2);
+    const rand = prng.random();
+    var coords: [dim]f32 = undefined;
+    for (&coords) |*c| c.* = rand.floatNorm(f32);
+
+    // dimension mismatch and duplicate id are rejected, index unchanged.
+    try std.testing.expectError(error.DimensionMismatch, index.add(allocator, 1, coords[0 .. dim - 1]));
+    try index.add(allocator, 1, &coords);
+    try std.testing.expectError(error.DuplicateId, index.add(allocator, 1, &coords));
+    try std.testing.expectEqual(@as(usize, 1), index.len());
+
+    // addBatch rejects a within-batch duplicate before mutating.
+    var batch: [3 * dim]f32 = undefined;
+    for (&batch) |*c| c.* = rand.floatNorm(f32);
+    try std.testing.expectError(error.DuplicateId, index.addBatch(allocator, &.{ 2, 3, 2 }, &batch, 2));
+    try std.testing.expectEqual(@as(usize, 1), index.len()); // unchanged
+
+    // k > m: asking for more than the beam returns at most what routing found.
+    var ctx = try Idx.SearchContext.init(allocator, &index, 4);
+    defer ctx.deinit(allocator);
+    var out: [16]SearchResult = undefined;
+    const n = index.search(&ctx, &coords, &out);
+    try std.testing.expect(n >= 1 and n <= 16);
+
+    // all-deleted index returns zero results, no crash.
+    try std.testing.expect(try index.remove(allocator, 1));
+    try std.testing.expectEqual(@as(usize, 0), index.len());
+    try std.testing.expectEqual(@as(usize, 0), index.search(&ctx, &coords, &out));
 }
 
 test "rerank_store=none falls back to quantized scoring" {

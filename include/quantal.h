@@ -33,7 +33,8 @@ quantal_index *quantal_index_create(size_t ef_construction, uint64_t seed);
 void quantal_index_destroy(quantal_index *index);
 
 /* Adds a vector of quantal_dim() floats under the given id.
- * Returns 0 on success, -1 on failure (allocation or duplicate id). */
+ * Returns 0 on success; -2 if the id is already present, -3 on dimension
+ * mismatch, -1 on any other failure (e.g. out of memory). */
 int32_t quantal_index_add(quantal_index *index, uint64_t id, const float *coords);
 
 /* Multi-threaded bulk ingest of n vectors (row-major, n*quantal_dim() floats). */

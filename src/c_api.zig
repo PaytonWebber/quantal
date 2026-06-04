@@ -56,8 +56,18 @@ export fn quantal_index_destroy(handle: ?*Handle) void {
 }
 
 export fn quantal_index_add(handle: *Handle, id: u64, coords: [*]const f32) i32 {
-    handle.index.add(allocator, id, coords[0..c_dim]) catch return -1;
+    handle.index.add(allocator, id, coords[0..c_dim]) catch |err| return errCode(err);
     return 0;
+}
+
+/// Maps the Zig error set to stable negative codes for the C boundary:
+/// -2 duplicate id, -3 dimension mismatch, -1 anything else (e.g. OOM).
+fn errCode(err: anyerror) i32 {
+    return switch (err) {
+        error.DuplicateId => -2,
+        error.DimensionMismatch => -3,
+        else => -1,
+    };
 }
 
 export fn quantal_index_len(handle: *const Handle) usize {
@@ -66,7 +76,7 @@ export fn quantal_index_len(handle: *const Handle) usize {
 
 /// Multi-threaded bulk ingest of n vectors (row-major coords, n*dim floats).
 export fn quantal_index_add_batch(handle: *Handle, ids: [*]const u64, coords: [*]const f32, n: usize, threads: usize) i32 {
-    handle.index.addBatch(allocator, ids[0..n], coords[0 .. n * c_dim], threads) catch return -1;
+    handle.index.addBatch(allocator, ids[0..n], coords[0 .. n * c_dim], threads) catch |err| return errCode(err);
     return 0;
 }
 

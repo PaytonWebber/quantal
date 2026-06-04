@@ -55,8 +55,12 @@ class Index:
         rc = self._lib.quantal_index_add_batch(
             self._handle, ids.ctypes.data_as(_u64p), vectors.ctypes.data_as(_f32p), n, threads
         )
+        if rc == -2:
+            raise ValueError("duplicate id (already in the index or repeated in this batch)")
+        if rc == -3:
+            raise ValueError(f"dimension mismatch (expected {self.dim})")
         if rc != 0:
-            raise RuntimeError("add failed (duplicate id, or out of memory)")
+            raise MemoryError("add failed (out of memory)")
         self._next_id = max(self._next_id, int(ids.max()) + 1) if n else self._next_id
         return ids
 

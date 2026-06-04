@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  zig-test:
+    name: zig test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Test (Debug)
+        run: zig build test -Dc-dim=128
+      - name: Test (ReleaseSafe)
+        run: zig build test -Doptimize=ReleaseSafe -Dc-dim=128
+      - name: Build C library
+        run: zig build -Doptimize=ReleaseFast -Dc-dim=64
+
+  python-test:
+    name: python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package + framework deps
+        run: pip install -e "python" numpy langchain-core llama-index-core langgraph
+      - name: Run tests
+        # The native library is built on demand (zig is on PATH) for the
+        # small dim these tests use.
+        run: |
+          python python/tests/test_index.py
+          python python/tests/test_langchain.py
+          python python/tests/test_llama_index.py
+          python python/tests/test_langgraph.py
