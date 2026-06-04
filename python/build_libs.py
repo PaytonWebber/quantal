@@ -56,8 +56,13 @@ def main():
             cmd.append(f"-Dtarget={args.target}")
         print("building dim", dim, " ".join(cmd))
         subprocess.run(cmd, cwd=root, check=True)
-        built = root / "zig-out" / "lib" / ("libquantal" + _EXT)
-        dest = out_dir / f"libquantal-dim{dim}{args.ext}"
+        # Windows emits a prefixless DLL in bin/; Linux/macOS put
+        # libquantal.<ext> in lib/. Bundled name is uniform (no lib prefix).
+        if sys.platform == "win32":
+            built = root / "zig-out" / "bin" / "quantal.dll"
+        else:
+            built = root / "zig-out" / "lib" / ("libquantal" + _EXT)
+        dest = out_dir / f"quantal-dim{dim}{args.ext}"
         shutil.copy(built, dest)
         print("  ->", dest, f"({dest.stat().st_size // 1024} KiB)")
 

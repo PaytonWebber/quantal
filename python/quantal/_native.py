@@ -26,7 +26,16 @@ _LIB_EXT = {"linux": ".so", "darwin": ".dylib", "win32": ".dll"}.get(sys.platfor
 
 
 def _lib_name(dim):
-    return f"libquantal-dim{dim}{_LIB_EXT}"
+    # Uniform bundled/cache name across platforms (only the extension varies).
+    return f"quantal-dim{dim}{_LIB_EXT}"
+
+
+def _built_artifact(root):
+    """Path of the dynamic library `zig build` just produced. Windows puts a
+    prefixless DLL in bin/; Linux and macOS put libquantal.<ext> in lib/."""
+    if sys.platform == "win32":
+        return os.path.join(root, "zig-out", "bin", "quantal.dll")
+    return os.path.join(root, "zig-out", "lib", "libquantal" + _LIB_EXT)
 
 _u64p = ctypes.POINTER(ctypes.c_uint64)
 _f32p = ctypes.POINTER(ctypes.c_float)
@@ -97,8 +106,7 @@ def _build(dim):
         ["zig", "build", "-Doptimize=ReleaseFast", f"-Dc-dim={dim}"],
         cwd=root, check=True,
     )
-    built = os.path.join(root, "zig-out", "lib", "libquantal" + _LIB_EXT)
-    shutil.copy(built, out)
+    shutil.copy(_built_artifact(root), out)
     return out
 
 
