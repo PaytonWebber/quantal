@@ -1,4 +1,0 @@
-numpy>=1.21
-
-[langchain]
-langchain-core>=0.3
