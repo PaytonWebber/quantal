@@ -23,7 +23,9 @@ jobs:
           - { name: linux-x86_64,   os: ubuntu-latest,  zig_target: "x86_64-linux-gnu.2.28",  repair: auditwheel }
           - { name: linux-aarch64,  os: ubuntu-24.04-arm, zig_target: "aarch64-linux-gnu.2.28", repair: auditwheel }
           - { name: macos-arm64,    os: macos-14,       zig_target: "",  repair: none }
-          - { name: macos-x86_64,   os: macos-13,       zig_target: "",  repair: none }
+          # Intel macOS (macos-13) runners are deprecated and no longer
+          # scheduled; Apple Silicon is the default Mac. Re-add via a Zig
+          # cross-build (-Dtarget=x86_64-macos) if Intel support is needed.
           - { name: windows-x86_64, os: windows-latest, zig_target: "",  repair: none }
     steps:
       - uses: actions/checkout@v4
