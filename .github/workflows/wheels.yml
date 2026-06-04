@@ -54,6 +54,16 @@ jobs:
           python -m pip install --upgrade build
           cd python && python -m build --wheel
 
+      - name: Fix macOS wheel tag (arm64, not universal2)
+        if: matrix.name == 'macos-arm64'
+        shell: bash
+        run: |
+          # The build host's Python is universal2, so the wheel inherits that
+          # tag, but the bundled libraries are arm64-only. Retag honestly so
+          # pip won't install it on Intel Macs and then fail to load.
+          python -m pip install wheel
+          python -m wheel tags --remove --platform-tag macosx_14_0_arm64 python/dist/*.whl
+
       - name: Repair Linux wheel (retag manylinux)
         if: matrix.repair == 'auditwheel'
         shell: bash
@@ -80,14 +90,20 @@ jobs:
           name: wheels-${{ matrix.name }}
           path: python/dist/*.whl
 
-  # On a tag, collect all wheels and publish (configure PYPI token / trusted
-  # publishing before enabling the upload step).
+  # On a tag, collect all wheels and publish to PyPI via trusted publishing.
+  # Requires a PyPI "trusted publisher" for this repo + workflow to be
+  # configured first (see README / docs); until then this job's upload step
+  # will fail, which is expected.
   publish:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      id-token: write   # OIDC token for PyPI trusted publishing
     steps:
       - uses: actions/download-artifact@v4
         with: { path: dist, pattern: wheels-*, merge-multiple: true }
       - run: ls -la dist
-      # - uses: pypa/gh-action-pypi-publish@release/v1   # enable when ready
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
