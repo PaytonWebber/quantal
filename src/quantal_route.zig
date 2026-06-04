@@ -37,7 +37,10 @@ pub fn main(init: std.process.Init) !void {
 
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(allocator);
-    var it = init.minimal.args.iterate();
+    // iterateAllocator (not iterate) is the cross-platform path: on Windows
+    // the args arrive WTF-16 and must be decoded into an allocation.
+    var it = try init.minimal.args.iterateAllocator(allocator);
+    defer it.deinit();
     while (it.next()) |arg| try args.append(allocator, arg);
     if (args.items.len < 2) usage();
 

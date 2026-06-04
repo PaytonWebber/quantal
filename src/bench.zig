@@ -55,7 +55,16 @@ const Dataset = struct {
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
-    const config = try parseArgs(allocator, init.minimal.args);
+    // Collect argv here (cross-platform: iterateAllocator, not iterate) and
+    // keep the iterator alive for the whole run, since the parsed Config
+    // holds slices into it.
+    var arg_it = try init.minimal.args.iterateAllocator(allocator);
+    defer arg_it.deinit();
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    defer argv_list.deinit(allocator);
+    while (arg_it.next()) |a| try argv_list.append(allocator, a);
+
+    const config = try parseArgs(allocator, argv_list.items);
     var dataset = try loadDataset(allocator, init.io, config);
     defer allocator.free(dataset.base);
     defer allocator.free(dataset.queries);
@@ -500,13 +509,7 @@ fn readFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
     };
 }
 
-fn parseArgs(allocator: std.mem.Allocator, args: std.process.Args) !Config {
-    var list: std.ArrayList([]const u8) = .empty;
-    defer list.deinit(allocator);
-    var it = args.iterate();
-    while (it.next()) |arg| try list.append(allocator, arg);
-    const argv = list.items;
-
+fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Config {
     if (argv.len < 2) usage();
     const mode = std.meta.stringToEnum(Mode, argv[1]) orelse usage();
 

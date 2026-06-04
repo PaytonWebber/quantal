@@ -25,7 +25,8 @@ pub fn main(init: std.process.Init) !void {
 
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(allocator);
-    var it = init.minimal.args.iterate();
+    var it = try init.minimal.args.iterateAllocator(allocator);
+    defer it.deinit();
     while (it.next()) |a| try args.append(allocator, a);
     if (args.items.len < 5) {
         std.debug.print("usage: routing-exp <dim> <trn.fvecs> <tst.fvecs> <gt.ivecs>\n", .{});
