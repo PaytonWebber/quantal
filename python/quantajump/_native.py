@@ -2,13 +2,14 @@
 
 quantajump fixes the vector dimension at compile time, so there is one shared
 library per dimension. This module hides that: given a dimension it returns a
-ready ctypes handle, building and caching the library on first use when a Zig
-toolchain and the project source are available. Resolution order:
+ready ctypes handle. Resolution order:
 
-  1. QUANTAJUMP_LIB env var (an explicit .so path), or an explicit path arg.
-  2. A cached build at ~/.cache/quantajump/libquantajump-dim<N>.so.
-  3. Build it with `zig build -Dc-dim=N` if the source tree and `zig` are
-     found, then cache it.
+  1. QUANTAJUMP_LIB env var (an explicit library path), or an explicit arg.
+  2. A binary bundled in the installed wheel (quantajump/_libs/) — covers the
+     common embedding dimensions, so `pip install` works with no toolchain.
+  3. A cached build at ~/.cache/quantajump/.
+  4. Build it with `zig build -Dc-dim=N` if the source tree and `zig` are
+     found (the long tail of uncommon dimensions), then cache it.
 
 If none apply, a clear error explains how to produce the library.
 """
@@ -19,6 +20,13 @@ import pathlib
 import shutil
 import subprocess
 import sys
+
+# Native shared-library extension for this platform.
+_LIB_EXT = {"linux": ".so", "darwin": ".dylib", "win32": ".dll"}.get(sys.platform, ".so")
+
+
+def _lib_name(dim):
+    return f"libquantajump-dim{dim}{_LIB_EXT}"
 
 _u64p = ctypes.POINTER(ctypes.c_uint64)
 _f32p = ctypes.POINTER(ctypes.c_float)
@@ -66,6 +74,12 @@ def _project_root():
     return pathlib.Path(env) if env else None
 
 
+def _bundled(dim):
+    """A prebuilt library shipped inside the installed wheel, if present."""
+    p = os.path.join(os.path.dirname(__file__), "_libs", _lib_name(dim))
+    return p if os.path.exists(p) else None
+
+
 def _cache_dir():
     base = os.environ.get("QUANTAJUMP_CACHE") or os.path.join(
         os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "quantajump"
@@ -78,12 +92,13 @@ def _build(dim):
     root = _project_root()
     if root is None or shutil.which("zig") is None:
         return None
-    out = os.path.join(_cache_dir(), f"libquantajump-dim{dim}.so")
+    out = os.path.join(_cache_dir(), _lib_name(dim))
     subprocess.run(
         ["zig", "build", "-Doptimize=ReleaseFast", f"-Dc-dim={dim}"],
         cwd=root, check=True,
     )
-    shutil.copy(os.path.join(root, "zig-out", "lib", "libquantajump.so"), out)
+    built = os.path.join(root, "zig-out", "lib", "libquantajump" + _LIB_EXT)
+    shutil.copy(built, out)
     return out
 
 
@@ -100,16 +115,17 @@ def load(dim=None, lib_path=None):
         return lib, got
 
     if dim is None:
-        raise ValueError("provide dim=... (or set QUANTAJUMP_LIB to a prebuilt .so)")
+        raise ValueError("provide dim=... (or set QUANTAJUMP_LIB to a prebuilt library)")
 
-    cached = os.path.join(_cache_dir(), f"libquantajump-dim{dim}.so")
-    path = cached if os.path.exists(cached) else _build(dim)
+    cached = os.path.join(_cache_dir(), _lib_name(dim))
+    path = _bundled(dim) or (cached if os.path.exists(cached) else _build(dim))
     if path is None:
         raise RuntimeError(
-            f"no quantajump library for dim {dim}. Build one with\n"
+            f"no quantajump library for dim {dim}. This wheel bundles binaries "
+            f"for the common embedding dimensions; for others, build one with\n"
             f"    zig build -Doptimize=ReleaseFast -Dc-dim={dim}\n"
-            f"and point QUANTAJUMP_LIB at zig-out/lib/libquantajump.so, or run "
-            f"from a source checkout with `zig` on PATH for automatic builds."
+            f"and set QUANTAJUMP_LIB to zig-out/lib/libquantajump{_LIB_EXT}, or "
+            f"run from a source checkout with `zig` on PATH for automatic builds."
         )
     lib = _cache.get(path) or _bind(path)
     _cache[path] = lib

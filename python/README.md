@@ -10,17 +10,31 @@ pip install -e python      # from a source checkout (builds libs on demand)
 ```
 
 quantajump fixes the vector dimension at compile time, so there is one native
-library per dimension. The binding resolves it automatically:
+library per dimension. The binding resolves it automatically, in order:
 
-- **Source checkout + `zig` on PATH** (recommended for dev): `Index(dim=N)`
-  builds `libquantajump` for that dimension on first use and caches it under
-  `~/.cache/quantajump/`.
-- **Prebuilt library**: build once with
-  `zig build -Doptimize=ReleaseFast -Dc-dim=N` and set
-  `QUANTAJUMP_LIB=zig-out/lib/libquantajump.so`.
+1. **`QUANTAJUMP_LIB`** — an explicit library path (overrides everything).
+2. **Bundled binary** — the published wheels carry prebuilt libraries for the
+   common embedding dimensions (256, 384, 512, 768, 1024, 1536, 3072), so
+   `pip install quantajump` works with **no toolchain** for those dims.
+3. **Cached build** under `~/.cache/quantajump/`.
+4. **Build on demand** — from a source checkout with `zig` on PATH,
+   `Index(dim=N)` builds and caches the library for any other dimension.
 
-(Shipping prebuilt per-dimension wheels via cibuildwheel is the remaining
-packaging step.)
+So a stock embedding model "just works" from a wheel; an unusual dimension
+needs either a source checkout (auto-build) or a manual
+`zig build -Dc-dim=N` + `QUANTAJUMP_LIB`.
+
+### Building wheels
+
+```bash
+cd python
+python build_libs.py                 # compile bundled dims into quantajump/_libs/
+python -m build --wheel              # -> dist/quantajump-...-py3-none-<platform>.whl
+```
+
+`build_libs.py --target x86_64-linux-gnu.2.28` pins glibc so the Linux wheel
+is manylinux-compatible (Zig cross-compiles directly — no Docker). CI in
+`.github/workflows/wheels.yml` builds Linux/macOS/Windows wheels this way.
 
 ## Core API
 

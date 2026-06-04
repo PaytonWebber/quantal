@@ -19,7 +19,8 @@ langgraph = ["langgraph>=0.2"]
 [tool.setuptools]
 packages = ["quantajump"]
 
-# NOTE: this packages the pure-Python ctypes layer. The native library is
-# resolved at runtime — built on demand from a source checkout (zig on PATH),
-# or supplied via the QUANTAJUMP_LIB env var. Shipping prebuilt per-dimension
-# wheels (cibuildwheel + `zig build`) is the remaining packaging step.
+[tool.setuptools.package-data]
+# Prebuilt native libraries bundled into the platform wheel (built by
+# build_libs.py before `python -m build`). Covers common embedding dims;
+# uncommon dims fall back to build-on-demand at runtime.
+quantajump = ["_libs/*.so", "_libs/*.dylib", "_libs/*.dll"]
