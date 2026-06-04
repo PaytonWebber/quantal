@@ -107,8 +107,8 @@ zig build -Doptimize=ReleaseFast -Dc-dim=768   # build the C library + binaries
 
 Research-grade and benchmarked on a single laptop; numbers should be taken as
 directional, not a leaderboard. The C ABI, Python package, and framework
-wrappers are tested; PyPI/crates publishing and the multi-platform CI wheels
-are wired but not yet released.
+wrappers are tested in CI on Linux, macOS, and Windows. Wheels are published
+to PyPI as `quantaldb`; a Rust crate is not published yet.
 
 ## How this was built
 
