@@ -106,6 +106,41 @@ directional, not a leaderboard. The C ABI, Python package, and framework
 wrappers are tested; PyPI/crates publishing and the multi-platform CI wheels
 are wired but not yet released.
 
+## References
+
+The methods quantal builds on:
+
+- **TurboQuant** — A. Zandieh, M. Daliri, M. Hadian, V. Mirrokni. *TurboQuant:
+  Online Vector Quantization with Near-optimal Distortion Rate*, 2025.
+  [arXiv:2504.19874](https://arxiv.org/abs/2504.19874) — the random rotation,
+  Lloyd-Max scalar quantization, and unbiased inner-product correction.
+- **QJL** — A. Zandieh, M. Daliri, I. Han. *QJL: 1-Bit Quantized JL Transform
+  for KV Cache Quantization with Zero Overhead*, 2024.
+  [arXiv:2406.03482](https://arxiv.org/abs/2406.03482) — the unbiased 1-bit
+  transform behind the inner-product stage.
+- **HNSW** — Yu. A. Malkov, D. A. Yashunin. *Efficient and Robust Approximate
+  Nearest Neighbor Search using Hierarchical Navigable Small World Graphs*,
+  2016. [arXiv:1603.09320](https://arxiv.org/abs/1603.09320) — the routing graph.
+- **SimHash** — M. Charikar. *Similarity Estimation Techniques from Rounding
+  Algorithms*, STOC 2002 — sign-random-projection codes; the multi-bit routing.
+- **Johnson–Lindenstrauss lemma** — W. B. Johnson, J. Lindenstrauss, 1984 —
+  random projection preserves angles, the basis for sub-`dim` routing codes.
+- **Lloyd–Max quantization** — S. P. Lloyd, *Least Squares Quantization in PCM*
+  (1982); J. Max, *Quantizing for Minimum Distortion* (1960) — the scalar codebook.
+
+Datasets and baseline:
+
+- **turbovec** — the comparison baseline.
+  [github.com/RyanCodrai/turbovec](https://github.com/RyanCodrai/turbovec)
+- **ANN-Benchmarks** — M. Aumüller, E. Bernhardsson, A. Faithfull, 2020.
+  [github.com/erikbern/ann-benchmarks](https://github.com/erikbern/ann-benchmarks)
+  — the glove-100 protocol.
+- **GloVe** — J. Pennington, R. Socher, C. D. Manning. *GloVe: Global Vectors
+  for Word Representation*, EMNLP 2014.
+- **DBpedia OpenAI embeddings** —
+  [Qdrant/dbpedia-entities-openai3-...-1536-1M](https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-large-1536-1M)
+  on Hugging Face.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
