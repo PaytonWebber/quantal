@@ -1,7 +1,7 @@
-"""Ergonomic Index over the quantajump C ABI.
+"""Ergonomic Index over the quantal C ABI.
 
     import numpy as np
-    from quantajump import Index
+    from quantal import Index
 
     with Index(dim=384) as index:
         ids = index.add(vectors)                 # auto-assigns ids 0..n-1
@@ -26,14 +26,14 @@ class Index:
     def __init__(self, dim=None, *, lib_path=None, ef_construction=200, seed=42,
                  _handle=None, _lib=None):
         self._lib = _lib or _native.load(dim, lib_path)[0]
-        self.dim = int(self._lib.qj_dim())
-        self.routing_bits = int(self._lib.qj_routing_bits())
+        self.dim = int(self._lib.quantal_dim())
+        self.routing_bits = int(self._lib.quantal_routing_bits())
         if _handle is not None:
             self._handle = _handle
         else:
-            self._handle = self._lib.qj_index_create(ef_construction, seed)
+            self._handle = self._lib.quantal_index_create(ef_construction, seed)
             if not self._handle:
-                raise MemoryError("qj_index_create failed")
+                raise MemoryError("quantal_index_create failed")
         self._next_id = 0
         self._contexts = {}
         self._context_len = -1
@@ -52,7 +52,7 @@ class Index:
             if ids.shape[0] != n:
                 raise ValueError("len(ids) must match number of vectors")
         threads = threads or os.cpu_count() or 1
-        rc = self._lib.qj_index_add_batch(
+        rc = self._lib.quantal_index_add_batch(
             self._handle, ids.ctypes.data_as(_u64p), vectors.ctypes.data_as(_f32p), n, threads
         )
         if rc != 0:
@@ -62,10 +62,10 @@ class Index:
 
     def remove(self, id_):
         """Removes a vector by id; returns True if it was present."""
-        return self._lib.qj_index_remove(self._handle, int(id_)) == 0
+        return self._lib.quantal_index_remove(self._handle, int(id_)) == 0
 
     def __len__(self):
-        return int(self._lib.qj_index_len(self._handle))
+        return int(self._lib.quantal_index_len(self._handle))
 
     # --- query ---
 
@@ -84,7 +84,7 @@ class Index:
         ids = np.zeros((n, k), dtype=np.uint64)
         scores = np.zeros((n, k), dtype=np.float32)
         counts = np.zeros(n, dtype=np.uintp)
-        rc = self._lib.qj_search_batch(
+        rc = self._lib.quantal_search_batch(
             self._handle, queries.ctypes.data_as(_f32p), n, k, m, threads,
             ids.ctypes.data_as(_u64p), scores.ctypes.data_as(_f32p), counts.ctypes.data_as(_usizep),
         )
@@ -101,7 +101,7 @@ class Index:
         ctx = self._context(m)
         ids = np.zeros(k, dtype=np.uint64)
         scores = np.zeros(k, dtype=np.float32)
-        count = self._lib.qj_search_filtered(
+        count = self._lib.quantal_search_filtered(
             self._handle, ctx, query.ctypes.data_as(_f32p),
             allowlist.ctypes.data_as(_u64p), allowlist.shape[0], k,
             ids.ctypes.data_as(_u64p), scores.ctypes.data_as(_f32p),
@@ -111,7 +111,7 @@ class Index:
     # --- persistence ---
 
     def save(self, path):
-        if self._lib.qj_index_save(self._handle, str(path).encode()) != 0:
+        if self._lib.quantal_index_save(self._handle, str(path).encode()) != 0:
             raise OSError(f"failed to save index to {path}")
 
     @classmethod
@@ -119,7 +119,7 @@ class Index:
         # Read the dim from the file header so the right library is loaded.
         dim = _read_tq_dim(path)
         lib = _native.load(dim, lib_path)[0]
-        handle = lib.qj_index_load(str(path).encode())
+        handle = lib.quantal_index_load(str(path).encode())
         if not handle:
             raise OSError(f"failed to load index from {path}")
         self = cls(_handle=handle, _lib=lib)
@@ -139,22 +139,22 @@ class Index:
     def _context(self, m):
         if self._context_len != len(self):
             for ctx in self._contexts.values():
-                self._lib.qj_context_destroy(ctx)
+                self._lib.quantal_context_destroy(ctx)
             self._contexts.clear()
             self._context_len = len(self)
         if m not in self._contexts:
-            ctx = self._lib.qj_context_create(self._handle, m)
+            ctx = self._lib.quantal_context_create(self._handle, m)
             if not ctx:
-                raise MemoryError("qj_context_create failed")
+                raise MemoryError("quantal_context_create failed")
             self._contexts[m] = ctx
         return self._contexts[m]
 
     def close(self):
         if getattr(self, "_handle", None):
             for ctx in self._contexts.values():
-                self._lib.qj_context_destroy(ctx)
+                self._lib.quantal_context_destroy(ctx)
             self._contexts.clear()
-            self._lib.qj_index_destroy(self._handle)
+            self._lib.quantal_index_destroy(self._handle)
             self._handle = None
 
     def __enter__(self):
@@ -172,5 +172,5 @@ def _read_tq_dim(path):
     with open(path, "rb") as f:
         head = f.read(8)
     if len(head) < 8 or head[:3] != b"TQX":
-        raise OSError(f"{path} is not a quantajump index")
+        raise OSError(f"{path} is not a quantal index")
     return int.from_bytes(head[4:8], "little")

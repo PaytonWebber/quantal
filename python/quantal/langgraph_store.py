@@ -1,14 +1,14 @@
-"""LangGraph BaseStore backed by quantajump — local, fast agent memory with
+"""LangGraph BaseStore backed by quantal — local, fast agent memory with
 semantic search:
 
-    from quantajump.langgraph_store import QuantajumpStore
+    from quantal.langgraph_store import QuantalStore
 
-    store = QuantajumpStore(index={"dims": 384, "embed": embed_fn, "fields": ["text"]})
+    store = QuantalStore(index={"dims": 384, "embed": embed_fn, "fields": ["text"]})
     store.put(("memories", "alice"), "m1", {"text": "prefers dark mode"})
     hits = store.search(("memories", "alice"), query="ui preferences", limit=5)
 
 `embed` is a callable list[str] -> list[list[float]] (a LangChain Embeddings
-object also works). Per-namespace semantic search is served by quantajump's
+object also works). Per-namespace semantic search is served by quantal's
 exact allowlist scoring, so namespace isolation is precise and adds no recall
 loss. Without an index config the store is a plain namespaced key-value store.
 TTL is accepted but not enforced (this is an in-memory store).
@@ -31,7 +31,7 @@ try:
         SearchOp,
     )
 except ImportError as e:  # pragma: no cover
-    raise ImportError("QuantajumpStore needs langgraph: pip install langgraph") from e
+    raise ImportError("QuantalStore needs langgraph: pip install langgraph") from e
 
 from .index import Index
 
@@ -45,7 +45,7 @@ def _normalize(vec):
     return a / max(float(np.linalg.norm(a)), 1e-30)
 
 
-class QuantajumpStore(BaseStore):
+class QuantalStore(BaseStore):
     supports_ttl = False
 
     def __init__(self, index=None, *, lib_path=None, m=128):

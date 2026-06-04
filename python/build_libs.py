@@ -1,6 +1,6 @@
-"""Compile the bundled quantajump libraries into quantajump/_libs/.
+"""Compile the bundled quantal libraries into quantal/_libs/.
 
-One shared library per dimension (quantajump fixes dim at compile time). We
+One shared library per dimension (quantal fixes dim at compile time). We
 prebuild the dimensions real embedding models use so the wheel works with no
 toolchain; uncommon dimensions fall back to build-on-demand at runtime.
 
@@ -46,7 +46,7 @@ def main():
     if not (root / "build.zig").is_file():
         sys.exit(f"build.zig not found at {root}; run from a source checkout")
 
-    out_dir = pathlib.Path(__file__).resolve().parent / "quantajump" / "_libs"
+    out_dir = pathlib.Path(__file__).resolve().parent / "quantal" / "_libs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     dims = [int(d) for d in args.dims.split(",") if d]
@@ -56,8 +56,8 @@ def main():
             cmd.append(f"-Dtarget={args.target}")
         print("building dim", dim, " ".join(cmd))
         subprocess.run(cmd, cwd=root, check=True)
-        built = root / "zig-out" / "lib" / ("libquantajump" + _EXT)
-        dest = out_dir / f"libquantajump-dim{dim}{args.ext}"
+        built = root / "zig-out" / "lib" / ("libquantal" + _EXT)
+        dest = out_dir / f"libquantal-dim{dim}{args.ext}"
         shutil.copy(built, dest)
         print("  ->", dest, f"({dest.stat().st_size // 1024} KiB)")
 

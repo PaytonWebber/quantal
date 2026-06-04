@@ -1,4 +1,4 @@
-# quantajump vs turbovec — same machine, same data, same metric
+# quantal vs turbovec — same machine, same data, same metric
 
 - **Hardware:** AMD Ryzen 5 7640U (Zen 4, AVX-512), 6C/12T, single-threaded unless noted
 - **Data:** DBpedia-entities OpenAI3 text-embedding-3-large, d=1536, first 100,000
@@ -8,7 +8,7 @@
   published metric); ground truth via exact matmul
 - **turbovec:** v0.7.0 from PyPI (`bit_width` 2/4); batch timing = 1000-query batch / 1000;
   ST = `RAYON_NUM_THREADS=1`, MT = default (12 threads)
-- **quantajump:** 3-bit payloads + 1-bit routing graph + exact FP32 stage-3 rerank
+- **quantal:** 3-bit payloads + 1-bit routing graph + exact FP32 stage-3 rerank
   (`max_edges=16`, `ef_construction=200`, default symmetric stage-2 scoring),
   single-threaded
 - Reproduce: `zig build bench -Doptimize=ReleaseFast -- fvecs data/dbpedia1536_base.fvecs
@@ -21,16 +21,16 @@
 |---|---|---|---|---|
 | turbovec | 2-bit flat | 0.884 | 0.996 | 1.443 |
 | turbovec | 4-bit flat | 0.964 | 1.000 | 2.717 |
-| **quantajump** | m=64 | 0.936 | 0.937 | **0.351** |
-| **quantajump** | m=128 | **0.970** | 0.971 | **0.479** |
-| **quantajump** | m=256 | **0.983** | 0.984 | **0.812** |
-| **quantajump** | m=512 | **0.995** | 0.996 | **1.347** |
+| **quantal** | m=64 | 0.936 | 0.937 | **0.351** |
+| **quantal** | m=128 | **0.970** | 0.971 | **0.479** |
+| **quantal** | m=256 | **0.983** | 0.984 | **0.812** |
+| **quantal** | m=512 | **0.995** | 0.996 | **1.347** |
 
-- At matched recall1@1 (~0.97): quantajump is **5.7× faster** than turbovec 4-bit ST
+- At matched recall1@1 (~0.97): quantal is **5.7× faster** than turbovec 4-bit ST
   (0.479 vs 2.717 ms/query).
-- quantajump m=512 exceeds turbovec 4-bit recall (0.995 vs 0.964) at **2× lower latency**.
+- quantal m=512 exceeds turbovec 4-bit recall (0.995 vs 0.964) at **2× lower latency**.
 - turbovec with all 12 threads (4-bit, 1.046 ms/q) is still 2.2× slower than
-  single-threaded quantajump at equal recall.
+  single-threaded quantal at equal recall.
 
 ## Multi-threaded (12 threads, same data, same machine)
 
@@ -38,20 +38,20 @@
 |---|---|---|---|---|
 | turbovec | 2-bit flat, batch | 0.884 | 1,764 | 567 |
 | turbovec | 4-bit flat, batch | 0.964 | 956 | 1,046 |
-| **quantajump** | m=128, sq8 | **0.964** | **17,156** | **58.3** |
-| **quantajump** | m=512, sq8 | **0.990** | **6,609** | **151.3** |
+| **quantal** | m=128, sq8 | **0.964** | **17,156** | **58.3** |
+| **quantal** | m=512, sq8 | **0.990** | **6,609** | **151.3** |
 
-At matched recall1@1 (0.964), quantajump answers **17.9× more queries/second**.
+At matched recall1@1 (0.964), quantal answers **17.9× more queries/second**.
 GloVe-100/100k MT: 85.6k QPS at m=128.
 
-Build (100k DBpedia-1536): quantajump 33.2s serial → **5.7s** with the batched
+Build (100k DBpedia-1536): quantal 33.2s serial → **5.7s** with the batched
 parallel builder (12 threads; plan-parallel/commit-serial, growing batch) —
 on par with turbovec's ~5s MT ingest. Batched-build recall is identical to the
 serial build (GloVe 0.746/0.884 vs 0.739/0.883).
 
 ## Where turbovec wins (honest ledger)
 
-| dimension | turbovec | quantajump |
+| dimension | turbovec | quantal |
 |---|---|---|
 | Resident memory | **75.5 MiB** (4-bit, no originals) | 276 MiB with sq8 (75.5 payloads + 54 graph + 147 sq8 store) |
 | recall1@k tail | →1.0 by k=4 (exhaustive) | plateaus at routing recall (raise m to push it) |
@@ -60,13 +60,13 @@ serial build (GloVe 0.746/0.884 vs 0.739/0.883).
 
 Notes:
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;
-  quantajump evaluates ~1–3% and grows ~logarithmically.
+  quantal evaluates ~1–3% and grows ~logarithmically.
 
 ## 1M-vector run (999,000 base + 1,000 held-out queries, same protocol)
 
 Same machine, same metric; turbovec ingested in 100k chunks (a single
 999k-row `add()` was OOM-killed at 21 GB RSS on this 30 GiB box — see
-RUN_1M.md). qj-bench memory: 754.6 MiB payloads + 536.5 MiB graph +
+RUN_1M.md). quantal-bench memory: 754.6 MiB payloads + 536.5 MiB graph +
 1467.2 MiB sq8 store vs 5853.5 MiB raw fp32.
 
 ### Multi-threaded (12 threads)
@@ -75,10 +75,10 @@ RUN_1M.md). qj-bench memory: 754.6 MiB payloads + 536.5 MiB graph +
 |---|---|---|---|---|
 | turbovec | 2-bit flat | 0.911 | 5.973 | 167 |
 | turbovec | 4-bit flat | 0.977 | 11.263 | 89 |
-| **quantajump** | m=128 | 0.932 | **0.076** | 13,173 |
-| **quantajump** | m=256 | 0.956 | **0.111** | 8,993 |
-| **quantajump** | m=512 | 0.975 | **0.234** | 4,270 |
-| **quantajump** | m=1024 | **0.984** | **0.362** | 2,760 |
+| **quantal** | m=128 | 0.932 | **0.076** | 13,173 |
+| **quantal** | m=256 | 0.956 | **0.111** | 8,993 |
+| **quantal** | m=512 | 0.975 | **0.234** | 4,270 |
+| **quantal** | m=1024 | **0.984** | **0.362** | 2,760 |
 
 At matched recall (~0.975-0.977): **48x faster**. At the 0.91-0.93 tier: 79x.
 
@@ -88,8 +88,8 @@ At matched recall (~0.975-0.977): **48x faster**. At the 0.91-0.93 tier: 79x.
 |---|---|---|---|
 | turbovec | 2-bit flat | 0.911 | 14.212 |
 | turbovec | 4-bit flat | 0.977 | 27.000 |
-| **quantajump** | m=128 | 0.934 | **0.524** |
-| **quantajump** | m=512 | 0.977 | **1.891** |
+| **quantal** | m=128 | 0.934 | **0.524** |
+| **quantal** | m=512 | 0.977 | **1.891** |
 
 At identical recall (0.977): **14.3x faster ST**; at the ~0.92 tier, 27x.
 
@@ -99,8 +99,8 @@ At identical recall (0.977): **14.3x faster ST**; at the ~0.92 tier, 27x.
 |---|---|---|---|
 | turbovec 4-bit ST | 2.717 ms | 27.000 ms | **9.9x (linear)** |
 | turbovec 4-bit MT | 1.046 ms | 11.263 ms | 10.8x |
-| quantajump m=128 ST | 0.482 ms | 0.524 ms | **1.09x** |
-| quantajump m=512 ST | 1.315 ms | 1.891 ms | 1.44x |
+| quantal m=128 ST | 0.482 ms | 0.524 ms | **1.09x** |
+| quantal m=512 ST | 1.315 ms | 1.891 ms | 1.44x |
 
 The flat scan pays the full corpus growth; graph routing pays ~log n. The
 matched-recall advantage grew from 5.7x (100k) to 14.3x ST / 48x MT (1M)
@@ -118,7 +118,7 @@ Other 1M observations:
 - turbovec single-query loop latency (not batch) at 1M: 39 ms (2-bit) /
   83 ms (4-bit) — the regime where interactive use stops being viable.
 
-## glove-100-angular (ann-benchmarks protocol) — where quantajump LOSES
+## glove-100-angular (ann-benchmarks protocol) — where quantal LOSES
 
 Standard ann-benchmarks dataset (1,183,514 train / 10,000 test, d=100,
 angular), exact precomputed neighbors, recall@10 = |returned ∩ true|/10
@@ -128,17 +128,17 @@ recall@10 = 1.0000.
 
 | system | config | recall@10 | QPS (MT) |
 |---|---|---|---|
-| quantajump | m=256 | 0.435 | 35,076 |
-| quantajump | m=1024 | 0.597 | 9,917 |
+| quantal | m=256 | 0.435 | 35,076 |
+| quantal | m=1024 | 0.597 | 9,917 |
 | turbovec | 2-bit | 0.570 | 4,408 |
 | turbovec | 4-bit | **0.858** | 2,388 |
 
 **On this low-dimensional dataset the DBpedia result reverses: turbovec
-wins recall decisively (0.858 vs our best 0.597), and quantajump cannot
+wins recall decisively (0.858 vs our best 0.597), and quantal cannot
 reach turbovec's recall@10 at any tested beam width.** We are faster at
 any *given* recall, but only in a recall range too low to be useful.
 
-Root cause — confirmed, not sparsity: quantajump's graph *routes* on
+Root cause — confirmed, not sparsity: quantal's graph *routes* on
 1-bit sign vectors, a d-bit code. At d=1536 that's 1536 bits of routing
 signal (rich, hence the DBpedia dominance); at **d=100 it's 100 bits**,
 so many vectors collapse to near-identical Hamming codes and the beam
@@ -153,7 +153,7 @@ numbers above zero-pad to 104, which does not change angular ranking.)
 
 ### Takeaway (original) and the fix
 
-The 1-bit default made quantajump a high-dimensional index: it won at
+The 1-bit default made quantal a high-dimensional index: it won at
 d≥768 and lost at d≤128. That weakness is now a tunable — see the next
 section. With `routing_bits=1024` the full glove-100 pipeline reaches
 recall@10 0.872 at 10,330 QPS (MT), **beating turbovec 4-bit's 0.858 at
@@ -165,12 +165,12 @@ Same dataset/protocol, shared library built `-Dc-dim=100 -Dc-routing-bits=1024`:
 
 | system | config | recall@10 | QPS (MT) |
 |---|---|---|---|
-| quantajump (1-bit, default) | m=1024 | 0.597 | 9,917 |
-| **quantajump (rb=1024)** | m=512 | **0.872** | 10,330 |
-| **quantajump (rb=1024)** | m=1024 | **0.900** | 5,105 |
+| quantal (1-bit, default) | m=1024 | 0.597 | 9,917 |
+| **quantal (rb=1024)** | m=512 | **0.872** | 10,330 |
+| **quantal (rb=1024)** | m=1024 | **0.900** | 5,105 |
 | turbovec | 4-bit | 0.858 | 2,148 |
 
-Multi-bit routing turns the one dataset where quantajump lost into a win
+Multi-bit routing turns the one dataset where quantal lost into a win
 on both axes. Cost: build 54s→106s (the projection), routing code
 16→128 bytes/vector, a small per-query projection — QPS stays well ahead.
 At d≥768 the default (routing_bits=dim) is unchanged and optimal, so the
@@ -328,7 +328,7 @@ int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:
 | **sq8** | 0.966 / 0.991 | **147 MiB** | **276 MiB** |
 | none | capped by 3-bit scoring | 0 | 129 MiB |
 
-~0.4pp recall for a 4x smaller rerank store; quantajump's total memory premium over
+~0.4pp recall for a 4x smaller rerank store; quantal's total memory premium over
 turbovec 4-bit (75.5 MiB) drops to ~3.7x — the price of +3pp recall at 2-5x lower
 latency.
 

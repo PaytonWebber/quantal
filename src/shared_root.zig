@@ -6,5 +6,5 @@
 //! Python. With libc linked, spawn goes through pthread_create instead.
 
 comptime {
-    _ = @import("quantajump");
+    _ = @import("quantal");
 }

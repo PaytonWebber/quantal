@@ -4,7 +4,7 @@
 //! time via `-Dc-dim` / `-Dc-max-edges` / `-Dc-routing-bits` (defaults:
 //! 1536 / 32 / 0). c-routing-bits == 0 means "auto" — the per-dimension
 //! recommendation (lifts low dims, leaves high dims at dim); see
-//! index.autoRoutingBits. See include/quantajump.h for the prototypes.
+//! index.autoRoutingBits. See include/quantal.h for the prototypes.
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -30,17 +30,17 @@ pub const Handle = struct {
 
 pub const Context = CIndex.SearchContext;
 
-export fn qj_dim() usize {
+export fn quantal_dim() usize {
     return c_dim;
 }
 
 /// The SimHash routing-code length this library was compiled with (== c_dim
 /// unless raised for low-dimensional data; see index.autoRoutingBits).
-export fn qj_routing_bits() usize {
+export fn quantal_routing_bits() usize {
     return c_routing_bits;
 }
 
-export fn qj_index_create(ef_construction: usize, seed: u64) ?*Handle {
+export fn quantal_index_create(ef_construction: usize, seed: u64) ?*Handle {
     const handle = allocator.create(Handle) catch return null;
     handle.index = CIndex.init(allocator, ef_construction, seed) catch {
         allocator.destroy(handle);
@@ -49,34 +49,34 @@ export fn qj_index_create(ef_construction: usize, seed: u64) ?*Handle {
     return handle;
 }
 
-export fn qj_index_destroy(handle: ?*Handle) void {
+export fn quantal_index_destroy(handle: ?*Handle) void {
     const h = handle orelse return;
     h.index.deinit(allocator);
     allocator.destroy(h);
 }
 
-export fn qj_index_add(handle: *Handle, id: u64, coords: [*]const f32) i32 {
+export fn quantal_index_add(handle: *Handle, id: u64, coords: [*]const f32) i32 {
     handle.index.add(allocator, id, coords[0..c_dim]) catch return -1;
     return 0;
 }
 
-export fn qj_index_len(handle: *const Handle) usize {
+export fn quantal_index_len(handle: *const Handle) usize {
     return handle.index.len();
 }
 
 /// Multi-threaded bulk ingest of n vectors (row-major coords, n*dim floats).
-export fn qj_index_add_batch(handle: *Handle, ids: [*]const u64, coords: [*]const f32, n: usize, threads: usize) i32 {
+export fn quantal_index_add_batch(handle: *Handle, ids: [*]const u64, coords: [*]const f32, n: usize, threads: usize) i32 {
     handle.index.addBatch(allocator, ids[0..n], coords[0 .. n * c_dim], threads) catch return -1;
     return 0;
 }
 
 /// Tombstones a vector by id. Returns 0 on success, -1 when unknown.
-export fn qj_index_remove(handle: *Handle, id: u64) i32 {
+export fn quantal_index_remove(handle: *Handle, id: u64) i32 {
     const removed = handle.index.remove(allocator, id) catch return -1;
     return if (removed) 0 else -1;
 }
 
-export fn qj_index_save(handle: *const Handle, path: [*:0]const u8) i32 {
+export fn quantal_index_save(handle: *const Handle, path: [*:0]const u8) i32 {
     const empty_labels = allocator.alloc([]const u8, handle.index.capacity()) catch return -1;
     defer allocator.free(empty_labels);
     @memset(empty_labels, "");
@@ -86,7 +86,7 @@ export fn qj_index_save(handle: *const Handle, path: [*:0]const u8) i32 {
     return 0;
 }
 
-export fn qj_index_load(path: [*:0]const u8) ?*Handle {
+export fn quantal_index_load(path: [*:0]const u8) ?*Handle {
     var threaded = std.Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     var loaded = storage.load(CIndex, allocator, threaded.io(), std.mem.span(path)) catch return null;
@@ -102,7 +102,7 @@ export fn qj_index_load(path: [*:0]const u8) ?*Handle {
 
 /// Creates a search context sized for the index's current contents.
 /// Recreate it after further inserts. `m` is the stage-1 candidate count.
-export fn qj_context_create(handle: *const Handle, m: usize) ?*Context {
+export fn quantal_context_create(handle: *const Handle, m: usize) ?*Context {
     if (m == 0) return null;
     const ctx = allocator.create(Context) catch return null;
     ctx.* = Context.init(allocator, &handle.index, m) catch {
@@ -112,7 +112,7 @@ export fn qj_context_create(handle: *const Handle, m: usize) ?*Context {
     return ctx;
 }
 
-export fn qj_context_destroy(ctx: ?*Context) void {
+export fn quantal_context_destroy(ctx: ?*Context) void {
     const c = ctx orelse return;
     c.deinit(allocator);
     allocator.destroy(c);
@@ -120,7 +120,7 @@ export fn qj_context_destroy(ctx: ?*Context) void {
 
 /// Writes up to k (capped at 256) results into out_ids/out_scores, sorted by
 /// descending score. Returns the result count. Allocation-free.
-export fn qj_search(
+export fn quantal_search(
     handle: *const Handle,
     ctx: *Context,
     query: [*]const f32,
@@ -139,7 +139,7 @@ export fn qj_search(
 }
 
 /// Restricts results to `allowed` (user ids); see Index.searchFiltered.
-export fn qj_search_filtered(
+export fn quantal_search_filtered(
     handle: *const Handle,
     ctx: *Context,
     query: [*]const f32,
@@ -161,7 +161,7 @@ export fn qj_search_filtered(
 
 /// Multi-threaded batch search over n queries (row-major, n*dim floats).
 /// out_ids/out_scores hold n*k slots; out_counts n entries.
-export fn qj_search_batch(
+export fn quantal_search_batch(
     handle: *const Handle,
     queries: [*]const f32,
     n: usize,
@@ -194,8 +194,8 @@ export fn qj_search_batch(
 }
 
 test "C API roundtrip" {
-    const handle = qj_index_create(2 * c_max_edges, 31).?;
-    defer qj_index_destroy(handle);
+    const handle = quantal_index_create(2 * c_max_edges, 31).?;
+    defer quantal_index_destroy(handle);
 
     var prng = std.Random.DefaultPrng.init(8);
     const rand = prng.random();
@@ -203,18 +203,18 @@ test "C API roundtrip" {
 
     for (0..50) |i| {
         for (&coords) |*c| c.* = rand.floatNorm(f32);
-        try std.testing.expectEqual(@as(i32, 0), qj_index_add(handle, 100 + i, &coords));
+        try std.testing.expectEqual(@as(i32, 0), quantal_index_add(handle, 100 + i, &coords));
     }
-    try std.testing.expectEqual(@as(usize, 50), qj_index_len(handle));
-    try std.testing.expectEqual(c_dim, qj_dim());
+    try std.testing.expectEqual(@as(usize, 50), quantal_index_len(handle));
+    try std.testing.expectEqual(c_dim, quantal_dim());
 
-    const ctx = qj_context_create(handle, 32).?;
-    defer qj_context_destroy(ctx);
+    const ctx = quantal_context_create(handle, 32).?;
+    defer quantal_context_destroy(ctx);
 
     var ids: [10]u64 = undefined;
     var scores: [10]f32 = undefined;
     for (&coords) |*c| c.* = rand.floatNorm(f32);
-    const count = qj_search(handle, ctx, &coords, 10, &ids, &scores);
+    const count = quantal_search(handle, ctx, &coords, 10, &ids, &scores);
     try std.testing.expectEqual(@as(usize, 10), count);
     for (ids) |id| {
         try std.testing.expect(id >= 100 and id < 150);

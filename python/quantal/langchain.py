@@ -1,13 +1,13 @@
-"""LangChain VectorStore backed by quantajump — a one-line swap for the
+"""LangChain VectorStore backed by quantal — a one-line swap for the
 in-memory / FAISS store:
 
-    from quantajump.langchain import QuantajumpVectorStore
-    vs = QuantajumpVectorStore.from_texts(texts, embedding=my_embeddings)
+    from quantal.langchain import QuantalVectorStore
+    vs = QuantalVectorStore.from_texts(texts, embedding=my_embeddings)
     docs = vs.similarity_search("query", k=5)
     vs.save("store.qj")               # vectors (.qj.tq) + docs (.qj.json)
-    vs = QuantajumpVectorStore.load("store.qj", embedding=my_embeddings)
+    vs = QuantalVectorStore.load("store.qj", embedding=my_embeddings)
 
-quantajump stores vectors keyed by integer id; the documents and metadata
+quantal stores vectors keyed by integer id; the documents and metadata
 live in a Python sidecar persisted alongside the .tq file. Distances use
 cosine similarity (vectors are L2-normalized on the way in and out), so the
 returned score is cosine similarity in [-1, 1], higher = closer.
@@ -22,7 +22,7 @@ try:
     from langchain_core.vectorstores import VectorStore
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        "QuantajumpVectorStore needs langchain-core: pip install quantajump[langchain]"
+        "QuantalVectorStore needs langchain-core: pip install quantal[langchain]"
     ) from e
 
 from .index import Index
@@ -36,8 +36,8 @@ def _normalize(m):
     return m / np.maximum(norms, 1e-30)
 
 
-class QuantajumpVectorStore(VectorStore):
-    """A drop-in LangChain VectorStore over the embedded quantajump engine."""
+class QuantalVectorStore(VectorStore):
+    """A drop-in LangChain VectorStore over the embedded quantal engine."""
 
     def __init__(self, embedding, *, dim=None, index=None, m=128, lib_path=None):
         self._embedding = embedding

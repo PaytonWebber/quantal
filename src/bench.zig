@@ -1,9 +1,9 @@
 //! Benchmark harness: recall and throughput against exact FP32 ground truth.
 //!
 //! Usage:
-//!   qj-bench synthetic [--n 10000] [--dim 128] [--queries 1000]
-//!   qj-bench fvecs <base.fvecs> [--query-file q.fvecs] [--max-base N] [--queries N]
-//!   qj-bench glove <vectors.txt> [--max-base N] [--queries N]
+//!   quantal-bench synthetic [--n 10000] [--dim 128] [--queries 1000]
+//!   quantal-bench fvecs <base.fvecs> [--query-file q.fvecs] [--max-base N] [--queries N]
+//!   quantal-bench glove <vectors.txt> [--max-base N] [--queries N]
 //!
 //! Common flags: --ef <ef_construction> (default 200), --no-normalize,
 //! --seed <u64>.
@@ -14,7 +14,7 @@
 //! `--queries` vectors are held out of the index and used as queries.
 
 const std = @import("std");
-const qj = @import("quantajump");
+const qj = @import("quantal");
 
 const supported_dims = [_]usize{ 25, 50, 64, 100, 128, 200, 300, 768, 1536 };
 const max_edges = 16;
@@ -573,9 +573,9 @@ fn nextArg(argv: []const []const u8, i: *usize) []const u8 {
 fn usage() noreturn {
     std.debug.print(
         \\usage:
-        \\  qj-bench synthetic [--n 10000] [--dim 128] [--queries 1000]
-        \\  qj-bench fvecs <base.fvecs> [--query-file q.fvecs] [--max-base 100000] [--queries 1000]
-        \\  qj-bench glove <vectors.txt> [--max-base 100000] [--queries 1000]
+        \\  quantal-bench synthetic [--n 10000] [--dim 128] [--queries 1000]
+        \\  quantal-bench fvecs <base.fvecs> [--query-file q.fvecs] [--max-base 100000] [--queries 1000]
+        \\  quantal-bench glove <vectors.txt> [--max-base 100000] [--queries 1000]
         \\
         \\common flags: --ef <n> (default 200), --seed <n>, --no-normalize,
         \\              --m <w1,w2,...> stage-1 beam widths (default 16,32,64,128),

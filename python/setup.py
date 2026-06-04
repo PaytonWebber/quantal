@@ -1,6 +1,6 @@
 """Marks the distribution as platform-specific so the wheel carries the right
 tag (e.g. cp3-none-manylinux...) — the package bundles prebuilt native
-libraries in quantajump/_libs/ rather than a pure-Python payload. Metadata
+libraries in quantal/_libs/ rather than a pure-Python payload. Metadata
 lives in pyproject.toml; this file only overrides the wheel platform tag.
 """
 

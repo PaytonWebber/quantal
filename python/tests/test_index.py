@@ -2,7 +2,7 @@ import sys, tempfile, os
 import numpy as np
 
 # --- low-level Index, build-on-demand for a fresh dim (exercises zig build) ---
-from quantajump import Index
+from quantal import Index
 rng = np.random.default_rng(0)
 idx = Index(dim=32)                      # triggers build+cache for dim=32
 print("Index dim", idx.dim, "routing_bits", idx.routing_bits)

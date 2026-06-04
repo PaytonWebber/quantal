@@ -3,7 +3,7 @@
 Uses the exact dataset, split, ground truth, and recall metric the
 ann-benchmarks harness uses (github.com/erikbern/ann-benchmarks), so the
 numbers are directly comparable to its published leaderboard — without the
-Docker orchestration. Runs quantajump and, if installed, turbovec.
+Docker orchestration. Runs quantal and, if installed, turbovec.
 
     python benchmarks/ann_local.py data/glove-100-angular.hdf5
 
@@ -34,12 +34,12 @@ def recall_at_k(returned, truth, k):
     return hits / (len(returned) * k)
 
 
-def run_quantajump(train, test, truth, angular, lib_dir):
+def run_quantal(train, test, truth, angular, lib_dir):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
-    from quantajump import Index
+    from quantal import Index
 
     dim = train.shape[1]
-    lib = os.path.join(lib_dir, f"libquantajump.so")
+    lib = os.path.join(lib_dir, f"libquantal.so")
     if not os.path.exists(lib):
         print(f"  (build first: zig build -Doptimize=ReleaseFast -Dc-dim={dim})")
         return
@@ -51,7 +51,7 @@ def run_quantajump(train, test, truth, angular, lib_dir):
     t0 = time.perf_counter()
     idx.add(np.arange(train.shape[0], dtype=np.uint64), train)
     build_s = time.perf_counter() - t0
-    print(f"quantajump: built {len(idx)} vectors in {build_s:.1f}s")
+    print(f"quantal: built {len(idx)} vectors in {build_s:.1f}s")
     print(f"  {'m':>5} {'recall@1':>9} {'recall@'+str(K):>10} {'QPS(1T)':>10} {'QPS(allT)':>11}")
 
     nq = test.shape[0]
@@ -114,7 +114,7 @@ def main():
     if angular:
         train, test = normalize(train), normalize(test)
 
-    run_quantajump(train, test, truth, angular, lib_dir)
+    run_quantal(train, test, truth, angular, lib_dir)
     print()
     run_turbovec(train, test, truth, angular)
 

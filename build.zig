@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     options.addOption(usize, "c_max_edges", c_max_edges);
     options.addOption(usize, "c_routing_bits", c_routing_bits);
 
-    const mod = b.addModule("quantajump", .{
+    const mod = b.addModule("quantal", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     mod.addOptions("build_options", options);
 
     const lib = b.addLibrary(.{
-        .name = "quantajump",
+        .name = "quantal",
         .linkage = .static,
         .root_module = mod,
     });
@@ -31,25 +31,25 @@ pub fn build(b: *std.Build) void {
     // Links libc: std.Thread's libc-free spawn path requires Zig-controlled
     // process startup, which a dlopen'd library never gets.
     const shared = b.addLibrary(.{
-        .name = "quantajump",
+        .name = "quantal",
         .linkage = .dynamic,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/shared_root.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .imports = &.{.{ .name = "quantajump", .module = mod }},
+            .imports = &.{.{ .name = "quantal", .module = mod }},
         }),
     });
     b.installArtifact(shared);
 
     const bench_exe = b.addExecutable(.{
-        .name = "qj-bench",
+        .name = "quantal-bench",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/bench.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "quantajump", .module = mod }},
+            .imports = &.{.{ .name = "quantal", .module = mod }},
         }),
     });
     b.installArtifact(bench_exe);
@@ -59,12 +59,12 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&run_bench.step);
 
     const route_exe = b.addExecutable(.{
-        .name = "qj-route",
+        .name = "quantal-route",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/qj_route.zig"),
+            .root_source_file = b.path("src/quantal_route.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "quantajump", .module = mod }},
+            .imports = &.{.{ .name = "quantal", .module = mod }},
         }),
     });
     b.installArtifact(route_exe);
@@ -75,7 +75,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("benchmarks/routing_experiment.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "quantajump", .module = mod }},
+            .imports = &.{.{ .name = "quantal", .module = mod }},
         }),
     });
     const run_routing_exp = b.addRunArtifact(routing_exp);
@@ -88,7 +88,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("benchmarks/rbits_sweep.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "quantajump", .module = mod }},
+            .imports = &.{.{ .name = "quantal", .module = mod }},
         }),
     });
     const run_rbits_sweep = b.addRunArtifact(rbits_sweep);

@@ -9,7 +9,7 @@
 //!   zig build rbits-sweep -Doptimize=ReleaseFast -- <base.fvecs> <query.fvecs> [nqueries]
 
 const std = @import("std");
-const qj = @import("quantajump");
+const qj = @import("quantal");
 
 const dim = 1536;
 const max_edges = 16;

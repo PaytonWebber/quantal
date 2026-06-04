@@ -1,4 +1,4 @@
-//! quantajump: two-stage cascading vector index.
+//! quantal: two-stage cascading vector index.
 //! Stage 1 routes through an HNSW-style graph over 1-bit sign vectors;
 //! Stage 2 reranks candidates with 3-bit TurboQuant payloads.
 

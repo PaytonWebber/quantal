@@ -1,8 +1,8 @@
-//! qj-route: interactive query console over a prebuilt .tq index.
+//! quantal-route: interactive query console over a prebuilt .tq index.
 //!
-//!   qj-route build --glove <vectors.txt> --out <index.tq>
+//!   quantal-route build --glove <vectors.txt> --out <index.tq>
 //!       [--max-vectors N] [--ef 200] [--seed 42]
-//!   qj-route --index <index.tq> [--dimensions N] [--m 128] [--symmetric]
+//!   quantal-route --index <index.tq> [--dimensions N] [--m 128] [--symmetric]
 //!
 //! Queries are embedded with the index's own vocabulary: each known token
 //! contributes its decoded payload vector (rotated space), the mean is
@@ -10,7 +10,7 @@
 //! and traversal counters are printed alongside the top matches.
 
 const std = @import("std");
-const qj = @import("quantajump");
+const qj = @import("quantal");
 
 const supported_dims = [_]usize{ 25, 50, 64, 100, 128, 200, 300, 768, 1536 };
 const max_edges = 16;
@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
 
 fn runBuildDispatch(allocator: std.mem.Allocator, io: std.Io, config: BuildConfig) !void {
     const data = try loadGlove(allocator, io, config.glove_path, config.max_vectors);
-    std.debug.print("[qj-route] parsed {s} vectors of dim {d} from {s}\n", .{
+    std.debug.print("[quantal-route] parsed {s} vectors of dim {d} from {s}\n", .{
         fmtComma(data.count), data.dim, config.glove_path,
     });
     normalizeAll(data.vectors, data.dim);
@@ -73,14 +73,14 @@ fn runBuild(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, confi
     for (0..data.count) |i| {
         try index.add(allocator, i, data.vectors[i * dim ..][0..dim]);
         if ((i + 1) % 50_000 == 0) {
-            std.debug.print("[qj-route] indexed {s} / {s}\n", .{ fmtComma(i + 1), fmtComma(data.count) });
+            std.debug.print("[quantal-route] indexed {s} / {s}\n", .{ fmtComma(i + 1), fmtComma(data.count) });
         }
     }
-    std.debug.print("[qj-route] built index in {d:.1}s\n", .{nsToS(timer.read())});
+    std.debug.print("[quantal-route] built index in {d:.1}s\n", .{nsToS(timer.read())});
 
     timer.reset();
     try qj.storage.save(Idx, allocator, io, config.out_path, &index, data.labels);
-    std.debug.print("[qj-route] wrote {s} in {d:.1}s\n", .{ config.out_path, nsToS(timer.read()) });
+    std.debug.print("[quantal-route] wrote {s} in {d:.1}s\n", .{ config.out_path, nsToS(timer.read()) });
 }
 
 // --- query mode ---
@@ -126,9 +126,9 @@ fn runQuery(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, confi
     const rerank_bytes = index.originals.items.len * @sizeOf(f32) +
         index.sq8_codes.items.len + index.sq8_scales.items.len * @sizeOf(f32);
     std.debug.print(
-        \\[qj-route] loaded {s} vectors (dim {d}) in {d:.1}s from {s}
-        \\[qj-route] resident index: {d:.1} MiB ({d:.1} MiB 3-bit payloads + {d:.1} MiB 1-bit graph mesh + {d:.1} MiB {s} rerank store)
-        \\[qj-route] stage-1 beam width m={d}, scoring: {s}{s}; type a query, or "exit"
+        \\[quantal-route] loaded {s} vectors (dim {d}) in {d:.1}s from {s}
+        \\[quantal-route] resident index: {d:.1} MiB ({d:.1} MiB 3-bit payloads + {d:.1} MiB 1-bit graph mesh + {d:.1} MiB {s} rerank store)
+        \\[quantal-route] stage-1 beam width m={d}, scoring: {s}{s}; type a query, or "exit"
         \\
         \\
     , .{
@@ -157,7 +157,7 @@ fn runQuery(comptime dim: usize, allocator: std.mem.Allocator, io: std.Io, confi
     var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buf);
 
     while (true) {
-        std.debug.print("qj-query> ", .{});
+        std.debug.print("quantal-query> ", .{});
         // takeDelimiter consumes the newline; its Exclusive sibling does
         // not, which would loop on the leftover delimiter forever.
         const line = (try stdin_reader.interface.takeDelimiter('\n')) orelse break;
@@ -456,9 +456,9 @@ fn nextArg(argv: []const []const u8, i: *usize) []const u8 {
 fn usage() noreturn {
     std.debug.print(
         \\usage:
-        \\  qj-route build --glove <vectors.txt> --out <index.tq>
+        \\  quantal-route build --glove <vectors.txt> --out <index.tq>
         \\      [--max-vectors N] [--ef 200] [--seed 42]
-        \\  qj-route --index <index.tq> [--dimensions N] [--m 128] [--symmetric]
+        \\  quantal-route --index <index.tq> [--dimensions N] [--m 128] [--symmetric]
         \\
     , .{});
     std.process.exit(1);

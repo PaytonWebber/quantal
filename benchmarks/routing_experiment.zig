@@ -10,7 +10,7 @@
 //!   zig build routing-exp -Doptimize=ReleaseFast -- <dim> <trn.fvecs> <tst.fvecs> <gt.ivecs>
 
 const std = @import("std");
-const qj = @import("quantajump");
+const qj = @import("quantal");
 
 const max_edges = 32;
 const ef_construction = 200;

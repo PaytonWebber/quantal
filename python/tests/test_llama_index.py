@@ -1,7 +1,7 @@
 import numpy as np
 from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.core.vector_stores.types import VectorStoreQuery
-from quantajump.llama_index import QuantajumpVectorStore
+from quantal.llama_index import QuantalVectorStore
 
 def emb(text, dim=32):
     rng = np.random.default_rng(abs(hash(text)) % (2**32))
@@ -15,7 +15,7 @@ for i, t in enumerate(texts):
     n.relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(node_id=f"ref{i}")
     nodes.append(n)
 
-store = QuantajumpVectorStore()
+store = QuantalVectorStore()
 ids = store.add(nodes)
 assert ids == ["n0","n1","n2","n3"], ids
 print("added", ids, "| index dim", store.client.dim, "rb", store.client.routing_bits)

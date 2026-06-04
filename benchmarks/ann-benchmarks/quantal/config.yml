@@ -3,9 +3,9 @@ float:
     - base_args: ["@metric", "@dimension"]
       constructor: QuantaJump
       disabled: false
-      docker_tag: ann-benchmarks-quantajump
-      module: ann_benchmarks.algorithms.quantajump
-      name: quantajump
+      docker_tag: ann-benchmarks-quantal
+      module: ann_benchmarks.algorithms.quantal
+      name: quantal
       run_groups:
         # ef_construction is the build-time beam; m is the search-time beam
         # (the recall/QPS dial). One run group per ef, swept over m.

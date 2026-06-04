@@ -1,14 +1,14 @@
-"""ann-benchmarks adapter for quantajump.
+"""ann-benchmarks adapter for quantal.
 
-Drop this directory into `ann_benchmarks/algorithms/quantajump/` in a clone of
+Drop this directory into `ann_benchmarks/algorithms/quantal/` in a clone of
 github.com/erikbern/ann-benchmarks (alongside the Dockerfile and config.yml
 here), then:
 
-    python install.py --algorithm quantajump
-    python run.py --algorithm quantajump --dataset glove-100-angular
+    python install.py --algorithm quantal
+    python run.py --algorithm quantal --dataset glove-100-angular
 
 The Dockerfile builds the shared library for the dataset's dimension; the
-wrapper loads it through the same ctypes layer shipped in python/quantajump.py.
+wrapper loads it through the same ctypes layer shipped in python/quantal.py.
 """
 
 import os
@@ -21,22 +21,22 @@ except ImportError:  # allow standalone import (local harness / tests)
     class BaseANN:
         pass
 
-# python/quantajump.py is copied next to this file by the Dockerfile.
-from quantajump import Index
+# python/quantal.py is copied next to this file by the Dockerfile.
+from quantal import Index
 
 
 class QuantaJump(BaseANN):
     def __init__(self, metric, dim, ef_construction=200):
         if metric not in ("angular", "dot"):
-            raise NotImplementedError(f"quantajump: unsupported metric {metric}")
+            raise NotImplementedError(f"quantal: unsupported metric {metric}")
         self._metric = metric
         self._dim = dim
         self._ef = ef_construction
         self._m = 128
         # The Dockerfile builds one shared library per supported dimension
-        # (quantajump fixes dim at compile time); pick the matching one.
+        # (quantal fixes dim at compile time); pick the matching one.
         lib_dir = os.environ.get("QJ_LIB_DIR", "/home/app/lib")
-        self._lib = os.path.join(lib_dir, f"libquantajump-{dim}.so")
+        self._lib = os.path.join(lib_dir, f"libquantal-{dim}.so")
         self._index = None
 
     def _prep(self, X):

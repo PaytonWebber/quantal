@@ -1,7 +1,7 @@
 import tempfile, os
 import numpy as np
 from langchain_core.embeddings import Embeddings
-from quantajump.langchain import QuantajumpVectorStore
+from quantal.langchain import QuantalVectorStore
 
 # Deterministic 32-d embedding: hash each text to a seed -> fixed vector.
 class FakeEmb(Embeddings):
@@ -16,7 +16,7 @@ emb = FakeEmb()
 texts = ["the cat sat", "a dog barked", "quantum entanglement", "vector search is fast", "ottawa is in canada"]
 metas = [{"src": f"doc{i}"} for i in range(len(texts))]
 
-vs = QuantajumpVectorStore.from_texts(texts, emb, metadatas=metas)
+vs = QuantalVectorStore.from_texts(texts, emb, metadatas=metas)
 print("built store, len", len(vs._docs))
 
 # Querying with an exact stored text must return that doc first.
@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory() as d:
     p = os.path.join(d, "store.qj")
     vs.save(p)
     assert os.path.exists(p + ".tq") and os.path.exists(p + ".json")
-    re = QuantajumpVectorStore.load(p, emb)
+    re = QuantalVectorStore.load(p, emb)
     r = re.similarity_search("quantum entanglement", k=1)
     assert r[0].page_content == "quantum entanglement"
     assert r[0].metadata["src"] == "doc2"

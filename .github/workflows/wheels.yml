@@ -1,6 +1,6 @@
 name: wheels
 
-# Builds the platform wheels. Each wheel bundles prebuilt quantajump libraries
+# Builds the platform wheels. Each wheel bundles prebuilt quantal libraries
 # for the common embedding dimensions (python/build_libs.py); the package is
 # ctypes-based, so one py3-none-<platform> wheel serves every Python 3.
 #
@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           python -m venv /tmp/v && /tmp/v/bin/python -m pip install numpy python/dist/*.whl
-          /tmp/v/bin/python -c "import numpy as np; from quantajump import Index; i=Index(dim=768); i.add(np.random.rand(100,768).astype('float32')); print('ok', len(i))"
+          /tmp/v/bin/python -c "import numpy as np; from quantal import Index; i=Index(dim=768); i.add(np.random.rand(100,768).astype('float32')); print('ok', len(i))"
 
       - uses: actions/upload-artifact@v4
         with:

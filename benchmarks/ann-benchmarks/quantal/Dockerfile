@@ -8,22 +8,22 @@ RUN curl -sL "https://ziglang.org/builds/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
         | tar -xJ -C /opt \
     && ln -s /opt/zig-x86_64-linux-${ZIG_VERSION}/zig /usr/local/bin/zig
 
-# quantajump source. Pin to a tag/commit in CI; cloned here for portability.
-RUN git clone --depth 1 https://github.com/USER/quantajump /opt/quantajump
-WORKDIR /opt/quantajump
+# quantal source. Pin to a tag/commit in CI; cloned here for portability.
+RUN git clone --depth 1 https://github.com/USER/quantal /opt/quantal
+WORKDIR /opt/quantal
 
 # Build one shared library per ann-benchmarks-relevant dimension (dim is
-# fixed at compile time). The wrapper selects libquantajump-<dim>.so.
+# fixed at compile time). The wrapper selects libquantal-<dim>.so.
 RUN mkdir -p /home/app/lib && \
     for d in 25 50 100 128 200 300 768 1536; do \
         zig build -Doptimize=ReleaseFast -Dc-dim=$d && \
-        cp zig-out/lib/libquantajump.so /home/app/lib/libquantajump-$d.so; \
+        cp zig-out/lib/libquantal.so /home/app/lib/libquantal-$d.so; \
     done
 
 # The ctypes wrapper is the algorithm's only runtime Python dependency.
-RUN cp python/quantajump.py /home/app/quantajump.py
+RUN cp python/quantal.py /home/app/quantal.py
 ENV QJ_LIB_DIR=/home/app/lib
 ENV PYTHONPATH=/home/app:$PYTHONPATH
 
 WORKDIR /home/app
-RUN python3 -c "import numpy, quantajump"
+RUN python3 -c "import numpy, quantal"

@@ -1,5 +1,5 @@
 import numpy as np
-from quantajump.langgraph_store import QuantajumpStore
+from quantal.langgraph_store import QuantalStore
 
 def embed(texts, dim=32):
     out = []
@@ -8,7 +8,7 @@ def embed(texts, dim=32):
         out.append(rng.standard_normal(dim).astype(np.float32).tolist())
     return out
 
-store = QuantajumpStore(index={"dims": 32, "embed": embed, "fields": ["text"]})
+store = QuantalStore(index={"dims": 32, "embed": embed, "fields": ["text"]})
 
 # put across namespaces
 store.put(("mem", "alice"), "m1", {"text": "prefers dark mode", "kind": "pref"})
@@ -48,7 +48,7 @@ assert ("mem","alice") in ns and ("mem","bob") not in [n for n in ns if store.ge
 print("list_namespaces:", ns)
 
 # no-query search (recency) + non-indexed plain KV mode
-plain = QuantajumpStore()  # no index config -> pure KV
+plain = QuantalStore()  # no index config -> pure KV
 plain.put(("cfg",), "k", {"v": 1})
 assert plain.get(("cfg",), "k").value == {"v": 1}
 print("plain KV mode: OK")

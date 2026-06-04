@@ -7,6 +7,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 .venv/
-python/quantajump/_libs/
+python/quantal/_libs/
 python/dist/
 python/build/

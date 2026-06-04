@@ -1,10 +1,10 @@
-"""LlamaIndex vector store backed by quantajump — a one-line swap for the
+"""LlamaIndex vector store backed by quantal — a one-line swap for the
 in-memory store:
 
-    from quantajump.llama_index import QuantajumpVectorStore
+    from quantal.llama_index import QuantalVectorStore
     from llama_index.core import VectorStoreIndex, StorageContext
 
-    store = QuantajumpVectorStore()
+    store = QuantalVectorStore()
     ctx = StorageContext.from_defaults(vector_store=store)
     index = VectorStoreIndex(nodes, storage_context=ctx, embed_model=embed)
     results = index.as_retriever(similarity_top_k=5).retrieve("query")
@@ -32,7 +32,7 @@ try:
     )
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        "QuantajumpVectorStore needs llama-index-core: pip install llama-index-core"
+        "QuantalVectorStore needs llama-index-core: pip install llama-index-core"
     ) from e
 
 from .index import Index
@@ -44,7 +44,7 @@ def _normalize(vec):
     return a / max(n, 1e-30)
 
 
-class QuantajumpVectorStore(BasePydanticVectorStore):
+class QuantalVectorStore(BasePydanticVectorStore):
     stores_text: bool = True
 
     _m: int = PrivateAttr()
