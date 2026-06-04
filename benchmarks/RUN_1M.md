@@ -32,7 +32,7 @@ O(n) scan — with measured data at 999k base vectors + 1k held-out queries.
 ```bash
 # single-threaded recall curve (ground truth dominates wall time)
 ./zig-out/bin/qj-bench fvecs data/dbpedia1536_1m_base.fvecs \
-    --query-file data/dbpedia1536_1m_query.fvecs --queries 1000 \
+    --query-file data/dbpedia1536_1m_query.fvecs --queries 1000 --max-base 999000 \
     --recall-curve --m 128,256,512,1024 --threads 12
 
 # note: --threads 12 parallelizes BUILD and SEARCH; for the ST search
@@ -40,7 +40,7 @@ O(n) scan — with measured data at 999k base vectors + 1k held-out queries.
 # so capture both from the threaded run first, then a --threads 1 pass
 # with a reduced --m list if ST latency is wanted).
 ./zig-out/bin/qj-bench fvecs data/dbpedia1536_1m_base.fvecs \
-    --query-file data/dbpedia1536_1m_query.fvecs --queries 1000 \
+    --query-file data/dbpedia1536_1m_query.fvecs --queries 1000 --max-base 999000 \
     --recall-curve --m 128,512
 ```
 

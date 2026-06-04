@@ -62,6 +62,62 @@ Notes:
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;
   quantajump evaluates ~1–3% and grows ~logarithmically.
 
+## 1M-vector run (999,000 base + 1,000 held-out queries, same protocol)
+
+Same machine, same metric; turbovec ingested in 100k chunks (a single
+999k-row `add()` was OOM-killed at 21 GB RSS on this 30 GiB box — see
+RUN_1M.md). qj-bench memory: 754.6 MiB payloads + 536.5 MiB graph +
+1467.2 MiB sq8 store vs 5853.5 MiB raw fp32.
+
+### Multi-threaded (12 threads)
+
+| system | config | recall1@1 | ms/query | QPS |
+|---|---|---|---|---|
+| turbovec | 2-bit flat | 0.911 | 5.973 | 167 |
+| turbovec | 4-bit flat | 0.977 | 11.263 | 89 |
+| **quantajump** | m=128 | 0.932 | **0.076** | 13,173 |
+| **quantajump** | m=256 | 0.956 | **0.111** | 8,993 |
+| **quantajump** | m=512 | 0.975 | **0.234** | 4,270 |
+| **quantajump** | m=1024 | **0.984** | **0.362** | 2,760 |
+
+At matched recall (~0.975-0.977): **48x faster**. At the 0.91-0.93 tier: 79x.
+
+### Single-threaded
+
+| system | config | recall1@1 | ms/query |
+|---|---|---|---|
+| turbovec | 2-bit flat | 0.911 | 14.212 |
+| turbovec | 4-bit flat | 0.977 | 27.000 |
+| **quantajump** | m=128 | 0.934 | **0.524** |
+| **quantajump** | m=512 | 0.977 | **1.891** |
+
+At identical recall (0.977): **14.3x faster ST**; at the ~0.92 tier, 27x.
+
+### Scaling, 100k -> 1M (the point of the experiment)
+
+| per-query cost | 100k | 1M | growth at 10x data |
+|---|---|---|---|
+| turbovec 4-bit ST | 2.717 ms | 27.000 ms | **9.9x (linear)** |
+| turbovec 4-bit MT | 1.046 ms | 11.263 ms | 10.8x |
+| quantajump m=128 ST | 0.482 ms | 0.524 ms | **1.09x** |
+| quantajump m=512 ST | 1.315 ms | 1.891 ms | 1.44x |
+
+The flat scan pays the full corpus growth; graph routing pays ~log n. The
+matched-recall advantage grew from 5.7x (100k) to 14.3x ST / 48x MT (1M)
+and keeps compounding with n.
+
+Other 1M observations:
+- Routing recall held: 0.932 at m=128 (-3.2pp vs 100k), recoverable to
+  0.984 at m=1024. recall1@1 == recall1@64 throughout (exact-rerank
+  property survives scale).
+- Build: 71.4s at 12 threads (5.5x parallel speedup; 390s serial);
+  turbovec chunked builds 45-77s. Parity holds.
+- turbovec 2-bit recall1@1 *rose* at 1M (0.884 -> 0.911): a denser corpus
+  narrows the top-1 margin the quantizer must resolve less often than it
+  widens it.
+- turbovec single-query loop latency (not batch) at 1M: 39 ms (2-bit) /
+  83 ms (4-bit) — the regime where interactive use stops being viable.
+
 ## SQ8 rerank store (now the default)
 
 int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:

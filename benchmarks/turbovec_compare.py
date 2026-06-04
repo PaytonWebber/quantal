@@ -48,10 +48,16 @@ print(f"ground truth: {time.perf_counter() - t0:.1f}s", flush=True)
 
 from turbovec import TurboQuantIndex
 
+# Ingest in chunks: turbovec's add() materializes large intermediates
+# (a single 999k x 1536 add was OOM-killed at 21 GB RSS on a 30 GiB box);
+# chunked ingest is its documented online-usage pattern anyway.
+add_chunk = int(os.environ.get("QJ_ADD_CHUNK", "100000"))
+
 for bits in bit_widths:
     idx = TurboQuantIndex(dim=base.shape[1], bit_width=bits)
     t0 = time.perf_counter()
-    idx.add(base)
+    for i in range(0, len(base), add_chunk):
+        idx.add(base[i:i + add_chunk])
     t_build = time.perf_counter() - t0
 
     # batch search (turbovec's preferred path; honours RAYON_NUM_THREADS)
