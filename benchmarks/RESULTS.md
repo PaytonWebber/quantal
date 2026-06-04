@@ -151,19 +151,30 @@ alone and is unaffected by dimension's effect on a graph.
 (turbovec also cannot run d=100 natively — it requires dim%8==0; the
 numbers above zero-pad to 104, which does not change angular ranking.)
 
-### Takeaway: quantajump is a high-dimensional embedding index
+### Takeaway (original) and the fix
 
-| regime | winner | why |
-|---|---|---|
-| d≥768 (LLM/RAG embeddings: OpenAI, Cohere, e5, …) | **quantajump**, by 14–48× at matched recall | 1-bit routing is information-rich |
-| d≤128 (glove, SIFT, classical ANN) | turbovec / hnswlib / FAISS | 1-bit routing is information-starved |
+The 1-bit default made quantajump a high-dimensional index: it won at
+d≥768 and lost at d≤128. That weakness is now a tunable — see the next
+section. With `routing_bits=1024` the full glove-100 pipeline reaches
+recall@10 0.872 at 10,330 QPS (MT), **beating turbovec 4-bit's 0.858 at
+2,148 QPS** where the 1-bit default managed only 0.597.
 
-The design target — high-dimensional embeddings — is exactly where it
-wins. The honest scope is "embedding/RAG index," not "general-purpose
-ANN library." Lifting the low-dim regime needs multi-bit routing codes
-(route on 2–4 bits/dim, or on the 3-bit payload's approximate distances)
-rather than 1-bit Hamming — a routing-layer change that leaves the
-high-dim path untouched.
+### Full-pipeline glove-100 with routing_bits=1024 (the fix, end-to-end)
+
+Same dataset/protocol, shared library built `-Dc-dim=100 -Dc-routing-bits=1024`:
+
+| system | config | recall@10 | QPS (MT) |
+|---|---|---|---|
+| quantajump (1-bit, default) | m=1024 | 0.597 | 9,917 |
+| **quantajump (rb=1024)** | m=512 | **0.872** | 10,330 |
+| **quantajump (rb=1024)** | m=1024 | **0.900** | 5,105 |
+| turbovec | 4-bit | 0.858 | 2,148 |
+
+Multi-bit routing turns the one dataset where quantajump lost into a win
+on both axes. Cost: build 54s→106s (the projection), routing code
+16→128 bytes/vector, a small per-query projection — QPS stays well ahead.
+At d≥768 the default (routing_bits=dim) is unchanged and optimal, so the
+high-dim results above are untouched.
 
 ## Multi-bit routing experiment — the low-dim fix, validated
 
@@ -194,13 +205,12 @@ stage-3 on top) would reach ~0.948 on glove-100, **beating turbovec's
 B=1024, a B×d projection per query (negligible), and a 128-byte routing
 code per vector (vs the 147 MiB sq8 store at 1M, immaterial).
 
-This makes the low-dim weakness a tunable, not a wall: expose
-`routing_bits` as a build parameter (default = dim, preserving the
-high-dim path exactly; raise it for low-dim datasets). The 1-bit code
-that wins at d=1536 is simply too short at d=100 — and lengthening it is
-cheap. Production integration (threading routing_bits through Index /
-graph / storage / C-API + a fresh d×B projection alongside the existing
-rotation) is the remaining work; the experiment confirms it is worth doing.
+This makes the low-dim weakness a tunable, not a wall. Now SHIPPED:
+`routing_bits` is a comptime Index parameter (default = dim, preserving
+the high-dim path exactly; `-Dc-routing-bits` at the C-ABI/build layer).
+The pre-rerank ceiling measured here (0.948) was confirmed end-to-end —
+the full pipeline at routing_bits=1024 reaches recall@10 0.900 on the
+full 1.18M glove-100 set, beating turbovec (see the glove section above).
 
 ## SQ8 rerank store (now the default)
 
