@@ -24,13 +24,15 @@ pub const RerankStore = enum(u8) { none = 0, fp32 = 1, sq8 = 2 };
 
 /// `routing_bits` is the SimHash routing-code length. The default, `dim`,
 /// routes on the sign bits of the rotated vector exactly as the 1-bit-per-
-/// dimension design always has (no projection, no cost). Setting it larger
-/// than `dim` adds a `routing_bits × dim` random projection so routing
-/// recall no longer caps at the data dimension — the fix for low-dimensional
-/// datasets (see benchmarks/RESULTS.md). It never needs to exceed a few
-/// thousand; high-dimensional embeddings already win at the default.
+/// dimension design always has (no projection, no cost). Any other value
+/// adds a `routing_bits × dim` random projection and routes on
+/// sign(R · rotated): larger than `dim` sharpens routing on low-dimensional
+/// data (the low-dim fix), while *smaller* than `dim` is a Johnson-
+/// Lindenstrauss reduction that trades a little routing recall for a shorter
+/// code (cheaper Hamming + projection) on high-dimensional data. See
+/// benchmarks/RESULTS.md.
 pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bits: usize) type {
-    comptime std.debug.assert(routing_bits >= dim);
+    comptime std.debug.assert(routing_bits >= 1);
     return struct {
         const Self = @This();
         pub const Payload = turboquant.TurboQuantPayload(dim);

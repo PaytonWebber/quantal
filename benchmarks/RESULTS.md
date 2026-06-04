@@ -261,6 +261,44 @@ high dim. A future `routing_bits = 0 → auto` heuristic at the build/C-ABI
 layer could apply this without user tuning; today it is an explicit
 comptime / `-Dc-routing-bits` choice.
 
+## routing_bits sweep at d=1536 — the default is Pareto-optimal at high dim
+
+Full pipeline (rotate → route → 3-bit LUT → sq8 rerank), DBpedia d=1536,
+100k vectors, 1k queries, 12 threads. `zig build rbits-sweep`. The
+routing_bits=dim row (1536) is the no-projection default; every other
+row adds a routing_bits×dim projection.
+
+| routing_bits | code | build | recall@10 / QPS (m=128) | recall@10 / QPS (m=512) |
+|---|---|---|---|---|
+| 256  | 32B  | 5.4s  | 0.636 / **16,313** | 0.811 / 6,413 |
+| 512  | 64B  | 6.3s  | 0.844 / 12,920 | 0.946 / 6,840 |
+| 1024 | 128B | 8.8s  | 0.931 / 12,228 | 0.982 / 5,457 |
+| **1536 (default)** | 192B | 6.2s | **0.959 / 14,970** | **0.989 / 6,649** |
+| 2048 | 256B | 15.1s | 0.958 / 6,851 | 0.989 / 4,185 |
+| 3072 | 384B | 22.1s | 0.964 / 5,253 | 0.989 / 2,806 |
+
+The default sits on the recall/QPS Pareto frontier: it has the highest
+recall of every routing_bits ≤ dim AND the highest throughput.
+
+- **Below dim is a net loss.** rb<1536 needs a projection whose per-query
+  cost outweighs the shorter-Hamming savings, so rb=1024/512 are both
+  lower-recall *and* slower than the default. rb=256 is the lone config
+  faster than the default (16.3k vs 15.0k QPS, m=128) but recall craters
+  to 0.636 — 9% more throughput for a 33% recall loss, never worth it.
+- **Above dim is pure loss.** rb=2048/3072 give essentially identical
+  recall (0.958/0.964 vs 0.959) at half-to-a-third the QPS and 2–4× the
+  build time — the extra bits route no better, you only pay for a bigger
+  projection.
+
+Why so clean: a d-dimensional vector *has* only d dimensions of angular
+structure, and its rotated sign bits already capture all of it. More bits
+add no information; fewer (via projection) discard signal *and* add cost.
+And the default uniquely pays nothing for routing — the rotated vector is
+already computed for quantization, so its signs are free. So
+`routing_bits = dim` is provably the right default at high dimension, and
+this measurement confirms it. (Contrast the low-dim crossover above, where
+the d-bit code is too short and raising routing_bits is a large win.)
+
 ## SQ8 rerank store (now the default)
 
 int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:

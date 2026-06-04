@@ -82,6 +82,19 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_routing_exp.addArgs(args);
     b.step("routing-exp", "Run the multi-bit routing experiment").dependOn(&run_routing_exp.step);
 
+    const rbits_sweep = b.addExecutable(.{
+        .name = "rbits-sweep",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/rbits_sweep.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "quantajump", .module = mod }},
+        }),
+    });
+    const run_rbits_sweep = b.addRunArtifact(rbits_sweep);
+    if (b.args) |args| run_rbits_sweep.addArgs(args);
+    b.step("rbits-sweep", "Sweep routing_bits on the full d=1536 pipeline").dependOn(&run_rbits_sweep.step);
+
     const tests = b.addTest(.{ .root_module = mod });
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
