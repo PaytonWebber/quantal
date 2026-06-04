@@ -52,7 +52,7 @@ def run_quantajump(train, test, truth, angular, lib_dir):
     idx.add(np.arange(train.shape[0], dtype=np.uint64), train)
     build_s = time.perf_counter() - t0
     print(f"quantajump: built {len(idx)} vectors in {build_s:.1f}s")
-    print(f"  {'m':>5} {'recall@'+str(K):>10} {'QPS(1T)':>10} {'QPS(allT)':>11}")
+    print(f"  {'m':>5} {'recall@1':>9} {'recall@'+str(K):>10} {'QPS(1T)':>10} {'QPS(allT)':>11}")
 
     nq = test.shape[0]
     for m in M_GRID:
@@ -62,12 +62,13 @@ def run_quantajump(train, test, truth, angular, lib_dir):
         qps_st = nq / (time.perf_counter() - t0)
         # All-thread QPS.
         t0 = time.perf_counter()
-        _, ids_mt, _ = idx.search(test, k=K, m=m, threads=os.cpu_count())
+        idx.search(test, k=K, m=m, threads=os.cpu_count())
         qps_mt = nq / (time.perf_counter() - t0)
 
         returned = [ids_st[i, : counts_st[i]] for i in range(nq)]
-        rec = recall_at_k(returned, truth, K)
-        print(f"  {m:>5} {rec:>10.4f} {qps_st:>10.0f} {qps_mt:>11.0f}")
+        rec10 = recall_at_k(returned, truth, K)
+        rec1 = recall_at_k(returned, truth, 1)
+        print(f"  {m:>5} {rec1:>9.4f} {rec10:>10.4f} {qps_st:>10.0f} {qps_mt:>11.0f}")
 
 
 def run_turbovec(train, test, truth, angular):
@@ -78,7 +79,15 @@ def run_turbovec(train, test, truth, angular):
         return
     dim = train.shape[1]
     nq = test.shape[0]
-    print(f"  {'bits':>5} {'recall@'+str(K):>10} {'QPS(1T)':>10} {'QPS(allT)':>11}")
+    # turbovec requires dim % 8 == 0; zero-pad if needed (an extra constant
+    # column does not change angular/IP ranking on normalized vectors).
+    if dim % 8 != 0:
+        pad = (8 - dim % 8)
+        print(f"  note: turbovec requires dim%8==0; zero-padding {dim}->{dim + pad}")
+        train = np.pad(train, ((0, 0), (0, pad)))
+        test = np.pad(test, ((0, 0), (0, pad)))
+        dim += pad
+    print(f"  {'bits':>5} {'recall@'+str(K):>10} {'QPS':>10}")
     for bits in (2, 4):
         idx = TurboQuantIndex(dim=dim, bit_width=bits)
         for i in range(0, len(train), 100_000):
@@ -87,8 +96,7 @@ def run_turbovec(train, test, truth, angular):
         _, ids = idx.search(test, K)  # honours RAYON_NUM_THREADS
         qps = nq / (time.perf_counter() - t0)
         rec = recall_at_k(ids, truth, K)
-        thr = os.environ.get("RAYON_NUM_THREADS", "all")
-        print(f"  {bits:>5} {rec:>10.4f} {'  (threads='+thr+')':>22} {qps:>8.0f}")
+        print(f"  {bits:>5} {rec:>10.4f} {qps:>10.0f}")
 
 
 def main():

@@ -1,0 +1,15 @@
+dataset: data/glove-100-angular.hdf5
+  train (1183514, 100), test (10000, 100), metric angular, k=10
+
+quantajump: built 1183514 vectors in 54.9s
+      m  recall@1  recall@10    QPS(1T)   QPS(allT)
+     64    0.3827     0.2743      13815      118598
+    128    0.4632     0.3534       7772       69366
+    256    0.5446     0.4346       4206       35076
+    512    0.6248     0.5175       2227       19719
+   1024    0.6967     0.5971       1132        9917
+
+  note: turbovec requires dim%8==0; zero-padding 100->104
+   bits  recall@10        QPS
+      2     0.5702       4408
+      4     0.8580       2388

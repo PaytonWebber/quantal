@@ -118,6 +118,53 @@ Other 1M observations:
 - turbovec single-query loop latency (not batch) at 1M: 39 ms (2-bit) /
   83 ms (4-bit) — the regime where interactive use stops being viable.
 
+## glove-100-angular (ann-benchmarks protocol) — where quantajump LOSES
+
+Standard ann-benchmarks dataset (1,183,514 train / 10,000 test, d=100,
+angular), exact precomputed neighbors, recall@10 = |returned ∩ true|/10
+(their default metric). Run via `benchmarks/ann_local.py`. Our metric was
+validated: exact normalized-IP reproduces the HDF5 ground truth at
+recall@10 = 1.0000.
+
+| system | config | recall@10 | QPS (MT) |
+|---|---|---|---|
+| quantajump | m=256 | 0.435 | 35,076 |
+| quantajump | m=1024 | 0.597 | 9,917 |
+| turbovec | 2-bit | 0.570 | 4,408 |
+| turbovec | 4-bit | **0.858** | 2,388 |
+
+**On this low-dimensional dataset the DBpedia result reverses: turbovec
+wins recall decisively (0.858 vs our best 0.597), and quantajump cannot
+reach turbovec's recall@10 at any tested beam width.** We are faster at
+any *given* recall, but only in a recall range too low to be useful.
+
+Root cause — confirmed, not sparsity: quantajump's graph *routes* on
+1-bit sign vectors, a d-bit code. At d=1536 that's 1536 bits of routing
+signal (rich, hence the DBpedia dominance); at **d=100 it's 100 bits**,
+so many vectors collapse to near-identical Hamming codes and the beam
+cannot resolve true neighbors. Quadrupling graph density (max_edges
+32→64, ef 200→400) moved recall@10 only 0.597→0.614 — the limit is the
+routing code's information content, not the graph. turbovec has no
+routing stage (it scans every vector), so its recall is the quantizer's
+alone and is unaffected by dimension's effect on a graph.
+
+(turbovec also cannot run d=100 natively — it requires dim%8==0; the
+numbers above zero-pad to 104, which does not change angular ranking.)
+
+### Takeaway: quantajump is a high-dimensional embedding index
+
+| regime | winner | why |
+|---|---|---|
+| d≥768 (LLM/RAG embeddings: OpenAI, Cohere, e5, …) | **quantajump**, by 14–48× at matched recall | 1-bit routing is information-rich |
+| d≤128 (glove, SIFT, classical ANN) | turbovec / hnswlib / FAISS | 1-bit routing is information-starved |
+
+The design target — high-dimensional embeddings — is exactly where it
+wins. The honest scope is "embedding/RAG index," not "general-purpose
+ANN library." Lifting the low-dim regime needs multi-bit routing codes
+(route on 2–4 bits/dim, or on the 3-bit payload's approximate distances)
+rather than 1-bit Hamming — a routing-layer change that leaves the
+high-dim path untouched.
+
 ## SQ8 rerank store (now the default)
 
 int8 rerank records (1 byte/coord + one f32 scale per vector) instead of fp32:
