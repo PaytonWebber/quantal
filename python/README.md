@@ -61,6 +61,34 @@ Vectors are L2-normalized in and out, so scores are cosine similarity. The
 engine stores vectors keyed by id; documents and metadata live in a JSON
 sidecar persisted next to the `.tq`.
 
+## LlamaIndex
+
+```python
+from quantajump.llama_index import QuantajumpVectorStore
+from llama_index.core import VectorStoreIndex, StorageContext
+
+store = QuantajumpVectorStore()                      # dim inferred from nodes
+ctx = StorageContext.from_defaults(vector_store=store)
+index = VectorStoreIndex(nodes, storage_context=ctx, embed_model=embed)
+hits = index.as_retriever(similarity_top_k=5).retrieve("query")
+```
+
+## LangGraph (agent memory)
+
+A `BaseStore` with semantic search — local, fast short/long-term memory for
+agent graphs. Per-namespace search is served by quantajump's exact allowlist
+scoring, so namespaces are isolated precisely.
+
+```python
+from quantajump.langgraph_store import QuantajumpStore
+
+store = QuantajumpStore(index={"dims": 384, "embed": embed_fn, "fields": ["text"]})
+store.put(("memories", "alice"), "m1", {"text": "prefers dark mode"})
+hits = store.search(("memories", "alice"), query="ui preferences", limit=5)
+```
+
+Without an `index` config it is a plain namespaced key-value store.
+
 ## Tests
 
 ```bash
