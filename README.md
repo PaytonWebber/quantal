@@ -24,9 +24,9 @@ DBpedia (OpenAI `text-embedding-3-large`, d=1536), measured against
 [turbovec](https://github.com/RyanCodrai/turbovec) on the same machine (a
 Ryzen 7640U laptop), at matched recall:
 
-| corpus | single-thread | multi-thread |
-|--------|--------------|--------------|
-| 100k vectors | ~5.7× faster | — |
+| corpus | single-thread | multi-thread (12 cores) |
+|--------|--------------|-------------------------|
+| 100k vectors | ~5.7× faster | ~17.9× faster |
 | 1M vectors | ~14× faster | ~48× faster |
 
 The gap widens with corpus size because a flat scan is O(n) per query while
