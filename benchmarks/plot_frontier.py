@@ -86,7 +86,9 @@ def frontier_plot(data, out):
     ax.set_ylabel("queries / sec, single thread (log, higher is better)", color=INK, fontsize=10)
     ax.set_title(f"{_name(data)}, {_corpus(data)} vectors: recall vs QPS",
                  color=INK, loc="left", fontweight="bold", fontsize=12)
-    ax.legend(frameon=False, labelcolor=INK, fontsize=9, loc="upper right")
+    # Curves descend left-to-right (QPS falls as recall rises), so the lower-left
+    # corner is empty; keep the legend there to avoid overlapping the lines.
+    ax.legend(frameon=False, labelcolor=INK, fontsize=9, loc="lower left")
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)

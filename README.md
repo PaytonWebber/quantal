@@ -7,10 +7,14 @@
 quantal is an embedded vector index that combines a navigable graph with
 quantized codes. A 1-bit SimHash graph routes each query to a few hundred
 candidates, 3-bit TurboQuant codes rerank that pool, and an exact pass settles
-the final order. So search is sub-linear (roughly O(log n), not a full scan),
-the index stores compact quantized codes instead of full-precision vectors, and
-the final ranking is exact. The short version: HNSW-class sub-linear search at
-quantizer-class memory, with exact final scoring.
+the final order. Search is sub-linear (roughly O(log n), not a full scan), the
+index stores compact quantized codes instead of full-precision vectors, and the
+final ranking is exact.
+
+It began as a question: how close can a quantized index get to a full-precision
+graph on the recall/latency frontier while spending far less memory? The
+[Results](#results) are the measured answer, on standard datasets against the
+usual baselines, including where it does not win.
 
 It is a library you link, not a server you run (think SQLite, not Pinecone): a
 Zig core with a C ABI, Python bindings, and drop-in LangChain, LlamaIndex, and
@@ -51,13 +55,9 @@ speed comparison is made at the same result quality.
 
 ### High-dimensional embeddings (DBpedia, text-embedding-3-large, d=1536)
 
-This is what quantal is built for. At 1M vectors it holds the recall/QPS
-frontier above both graph baselines across the practical high-recall band, at a
-fraction of their memory:
+At 1M vectors, single thread:
 
 ![DBpedia 1M: recall vs QPS](docs/frontier_dbpedia1m.svg)
-
-At matched recall, single thread:
 
 | recall@10 | quantal  | hnswlib | FAISS-HNSW |
 |-----------|----------|---------|------------|
@@ -65,30 +65,29 @@ At matched recall, single thread:
 | ~0.975    | 1174 QPS | 931     | 841        |
 | ~0.99     | 738 QPS  | 372     | 453        |
 
-The memory gap is the structural advantage: quantal stores 3-bit codes plus an
-int8 rerank store instead of full-precision vectors in the graph.
+Across recall 0.95-0.99 quantal returns more queries per second than either
+graph; past recall 0.996 the graphs reach a tail quantal does not. The index is
+smaller because quantal stores 3-bit codes plus an int8 rerank store rather than
+full-precision vectors in the graph: ~2.6 GB against ~6.3 GB for the fp32 graphs.
 
 ![DBpedia 1M: index memory](docs/memory_dbpedia1m.svg)
 
-At 1M × 1536 the fp32 graphs hold ~6.3 GB; quantal's index is ~2.6 GB, 2.4×
-leaner, at higher QPS. The graphs do reach the extreme tail (recall 0.996+) that
-quantal does not; for the 0.95-0.99 band most applications target, quantal is on
-top. The 100k frontier has the same shape:
+The 100k frontier has the same shape:
 
 ![DBpedia 100k: recall vs QPS](docs/frontier_dbpedia100k.svg)
 
-The flat quantizers anchor the low-memory corner and pay for it: at 1M,
-turbovec's linear scan drops to ~13-24 QPS, and FAISS-IVFPQ's compression caps
-recall near 0.49 at this dimensionality.
+The flat quantizers use less memory still: at 1M, turbovec's linear scan runs at
+~13-24 QPS, and FAISS-IVFPQ's compression holds recall near 0.49 at this
+dimensionality.
 
-### Low-dimensional data (GloVe-100): the honest weak case
+### Low-dimensional data (GloVe-100)
 
-quantal targets the 384-3072 range, and below it the picture flips. On GloVe-100
-(d=100, 1.2M vectors) the graphs win the frontier outright: at matched ~0.84
-recall, hnswlib does about 4000 QPS to quantal's about 1700, and there is no
-memory advantage either (601 vs 649 MB) because fp32 vectors are small at low
-dimension. On low-dimensional data a full-precision graph is the better tool;
-auto-widened routing codes narrow the gap but do not close it.
+Below the 384-3072 range the result reverses. On GloVe-100 (d=100, 1.2M vectors)
+the graph is faster across the whole frontier: at matched ~0.84 recall, hnswlib
+returns about 4000 QPS to quantal's about 1700, and there is no memory advantage
+(601 vs 649 MB), since fp32 vectors are small when the dimension is small. At low
+dimension a full-precision graph is the better tool; the auto-widened routing
+code narrows the gap but does not close it.
 
 ![GloVe-100: recall vs QPS](docs/frontier_glove100.svg)
 
