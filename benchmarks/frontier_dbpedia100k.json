@@ -1,0 +1,250 @@
+{
+  "dataset": "dbpedia1536_base.fvecs",
+  "k": 10,
+  "n_train": 100000,
+  "n_test": 1000,
+  "metric": "cosine",
+  "indexes": {
+    "quantal": {
+      "build_s": 10.72,
+      "bytes": 270720514,
+      "points": [
+        {
+          "knob": "m=64",
+          "recall": 0.9617,
+          "qps": 2573.9
+        },
+        {
+          "knob": "m=96",
+          "recall": 0.9792,
+          "qps": 2159.1
+        },
+        {
+          "knob": "m=128",
+          "recall": 0.9853,
+          "qps": 1817.9
+        },
+        {
+          "knob": "m=192",
+          "recall": 0.9916,
+          "qps": 1453.7
+        },
+        {
+          "knob": "m=256",
+          "recall": 0.9934,
+          "qps": 1180.2
+        },
+        {
+          "knob": "m=384",
+          "recall": 0.9951,
+          "qps": 883.4
+        },
+        {
+          "knob": "m=512",
+          "recall": 0.9957,
+          "qps": 700.1
+        },
+        {
+          "knob": "m=768",
+          "recall": 0.9959,
+          "qps": 497.9
+        },
+        {
+          "knob": "m=1024",
+          "recall": 0.9961,
+          "qps": 389.6
+        }
+      ]
+    },
+    "hnswlib": {
+      "build_s": 33.64,
+      "bytes": 629244136,
+      "points": [
+        {
+          "knob": "ef=16",
+          "recall": 0.8486,
+          "qps": 4816.7
+        },
+        {
+          "knob": "ef=24",
+          "recall": 0.8948,
+          "qps": 3735.9
+        },
+        {
+          "knob": "ef=32",
+          "recall": 0.9225,
+          "qps": 3026.2
+        },
+        {
+          "knob": "ef=48",
+          "recall": 0.9542,
+          "qps": 2255.0
+        },
+        {
+          "knob": "ef=64",
+          "recall": 0.9693,
+          "qps": 1789.0
+        },
+        {
+          "knob": "ef=96",
+          "recall": 0.9828,
+          "qps": 1267.2
+        },
+        {
+          "knob": "ef=128",
+          "recall": 0.9889,
+          "qps": 1004.3
+        },
+        {
+          "knob": "ef=192",
+          "recall": 0.994,
+          "qps": 706.3
+        },
+        {
+          "knob": "ef=256",
+          "recall": 0.9964,
+          "qps": 555.3
+        },
+        {
+          "knob": "ef=384",
+          "recall": 0.9978,
+          "qps": 393.5
+        },
+        {
+          "knob": "ef=512",
+          "recall": 0.9982,
+          "qps": 308.2
+        }
+      ]
+    },
+    "faiss-hnsw": {
+      "build_s": 130.27,
+      "bytes": 628833274,
+      "points": [
+        {
+          "knob": "ef=16",
+          "recall": 0.862,
+          "qps": 6057.2
+        },
+        {
+          "knob": "ef=24",
+          "recall": 0.9092,
+          "qps": 4733.4
+        },
+        {
+          "knob": "ef=32",
+          "recall": 0.938,
+          "qps": 3858.3
+        },
+        {
+          "knob": "ef=48",
+          "recall": 0.9626,
+          "qps": 2833.5
+        },
+        {
+          "knob": "ef=64",
+          "recall": 0.9774,
+          "qps": 2288.4
+        },
+        {
+          "knob": "ef=96",
+          "recall": 0.9892,
+          "qps": 1641.1
+        },
+        {
+          "knob": "ef=128",
+          "recall": 0.9933,
+          "qps": 1278.8
+        },
+        {
+          "knob": "ef=192",
+          "recall": 0.996,
+          "qps": 904.1
+        },
+        {
+          "knob": "ef=256",
+          "recall": 0.998,
+          "qps": 714.2
+        },
+        {
+          "knob": "ef=384",
+          "recall": 0.999,
+          "qps": 500.1
+        },
+        {
+          "knob": "ef=512",
+          "recall": 0.9993,
+          "qps": 388.0
+        }
+      ]
+    },
+    "faiss-ivfpq": {
+      "build_s": 52.59,
+      "bytes": 15072692,
+      "points": [
+        {
+          "knob": "nprobe=1",
+          "recall": 0.4039,
+          "qps": 6519.2
+        },
+        {
+          "knob": "nprobe=2",
+          "recall": 0.4563,
+          "qps": 6643.2
+        },
+        {
+          "knob": "nprobe=4",
+          "recall": 0.4784,
+          "qps": 6332.7
+        },
+        {
+          "knob": "nprobe=8",
+          "recall": 0.484,
+          "qps": 5892.7
+        },
+        {
+          "knob": "nprobe=16",
+          "recall": 0.4852,
+          "qps": 5140.8
+        },
+        {
+          "knob": "nprobe=32",
+          "recall": 0.4855,
+          "qps": 4120.5
+        },
+        {
+          "knob": "nprobe=64",
+          "recall": 0.4856,
+          "qps": 3044.5
+        },
+        {
+          "knob": "nprobe=128",
+          "recall": 0.4856,
+          "qps": 1949.6
+        },
+        {
+          "knob": "nprobe=256",
+          "recall": 0.4856,
+          "qps": 1139.3
+        }
+      ],
+      "config": "nlist=1024,m_pq=64,nbits=8"
+    },
+    "turbovec": {
+      "build_s": 4.81,
+      "bytes": 77212306,
+      "points": [
+        {
+          "knob": "bits=2",
+          "recall": 0.8992,
+          "qps": 237.8
+        },
+        {
+          "knob": "bits=4",
+          "recall": 0.9676,
+          "qps": 125.7
+        }
+      ]
+    }
+  }
+}

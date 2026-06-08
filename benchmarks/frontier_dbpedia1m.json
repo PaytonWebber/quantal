@@ -1,0 +1,198 @@
+{
+  "dataset": "dbpedia1536_1m_base.fvecs",
+  "k": 10,
+  "n_train": 999000,
+  "n_test": 1000,
+  "metric": "cosine",
+  "indexes": {
+    "quantal": {
+      "build_s": 134.66,
+      "bytes": 2619586582,
+      "points": [
+        {
+          "knob": "m=64",
+          "recall": 0.9448,
+          "qps": 2037.2
+        },
+        {
+          "knob": "m=96",
+          "recall": 0.9648,
+          "qps": 1769.9
+        },
+        {
+          "knob": "m=128",
+          "recall": 0.9736,
+          "qps": 1516.7
+        },
+        {
+          "knob": "m=192",
+          "recall": 0.9809,
+          "qps": 1173.6
+        },
+        {
+          "knob": "m=256",
+          "recall": 0.9851,
+          "qps": 998.8
+        },
+        {
+          "knob": "m=384",
+          "recall": 0.9909,
+          "qps": 738.5
+        },
+        {
+          "knob": "m=512",
+          "recall": 0.9915,
+          "qps": 611.5
+        },
+        {
+          "knob": "m=768",
+          "recall": 0.9927,
+          "qps": 438.9
+        },
+        {
+          "knob": "m=1024",
+          "recall": 0.9937,
+          "qps": 337.2
+        }
+      ]
+    },
+    "hnswlib": {
+      "build_s": 426.79,
+      "bytes": 6286271836,
+      "points": [
+        {
+          "knob": "ef=16",
+          "recall": 0.8302,
+          "qps": 3569.0
+        },
+        {
+          "knob": "ef=24",
+          "recall": 0.878,
+          "qps": 3172.4
+        },
+        {
+          "knob": "ef=32",
+          "recall": 0.9081,
+          "qps": 2579.3
+        },
+        {
+          "knob": "ef=48",
+          "recall": 0.9379,
+          "qps": 1960.1
+        },
+        {
+          "knob": "ef=64",
+          "recall": 0.9536,
+          "qps": 1605.5
+        },
+        {
+          "knob": "ef=96",
+          "recall": 0.9686,
+          "qps": 1175.0
+        },
+        {
+          "knob": "ef=128",
+          "recall": 0.9766,
+          "qps": 931.4
+        },
+        {
+          "knob": "ef=192",
+          "recall": 0.9829,
+          "qps": 668.0
+        },
+        {
+          "knob": "ef=256",
+          "recall": 0.988,
+          "qps": 529.7
+        },
+        {
+          "knob": "ef=384",
+          "recall": 0.9916,
+          "qps": 371.8
+        },
+        {
+          "knob": "ef=512",
+          "recall": 0.9937,
+          "qps": 284.1
+        }
+      ]
+    },
+    "faiss-hnsw": {
+      "build_s": 1824.16,
+      "bytes": 6281970202,
+      "points": [
+        {
+          "knob": "ef=16",
+          "recall": 0.8428,
+          "qps": 3982.3
+        },
+        {
+          "knob": "ef=24",
+          "recall": 0.8883,
+          "qps": 3023.1
+        },
+        {
+          "knob": "ef=32",
+          "recall": 0.9183,
+          "qps": 2607.7
+        },
+        {
+          "knob": "ef=48",
+          "recall": 0.9435,
+          "qps": 1868.6
+        },
+        {
+          "knob": "ef=64",
+          "recall": 0.9607,
+          "qps": 1502.3
+        },
+        {
+          "knob": "ef=96",
+          "recall": 0.972,
+          "qps": 1084.5
+        },
+        {
+          "knob": "ef=128",
+          "recall": 0.9781,
+          "qps": 840.8
+        },
+        {
+          "knob": "ef=192",
+          "recall": 0.9867,
+          "qps": 585.2
+        },
+        {
+          "knob": "ef=256",
+          "recall": 0.9905,
+          "qps": 453.0
+        },
+        {
+          "knob": "ef=384",
+          "recall": 0.994,
+          "qps": 307.3
+        },
+        {
+          "knob": "ef=512",
+          "recall": 0.9958,
+          "qps": 235.3
+        }
+      ]
+    },
+    "turbovec": {
+      "build_s": 44.46,
+      "bytes": 771240306,
+      "points": [
+        {
+          "knob": "bits=2",
+          "recall": 0.9082,
+          "qps": 24.0
+        },
+        {
+          "knob": "bits=4",
+          "recall": 0.9696,
+          "qps": 12.9
+        }
+      ]
+    }
+  }
+}
