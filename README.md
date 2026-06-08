@@ -4,25 +4,25 @@
 [![CI](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml/badge.svg)](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-quantal is an embedded vector index that combines a navigable graph with
-quantized codes. A 1-bit SimHash graph routes each query to a few hundred
-candidates, 3-bit TurboQuant codes score that pool, and a final rerank pass
-uses a stored rerank representation to order the returned candidates. Search is
-sub-linear (roughly O(log n), not a full scan), and the default index stores
-compact quantized data instead of full-precision vectors.
+quantal is a vector index you link into an application, not a server you run.
+It combines graph routing with quantized codes: a 1-bit SimHash graph routes
+each query to a few hundred candidates, 3-bit TurboQuant codes score that pool,
+and a final rerank pass uses a stored rerank representation to order the
+returned candidates. Search routes through the graph instead of scanning every
+vector, and the default index stores compact quantized data instead of
+full-precision vectors.
 
 It began as a question: how close can a quantized index get to a full-precision
 graph on the recall/QPS frontier while spending less memory? The
 [Results](#results) section reports the measurements on standard datasets
 against same-machine baselines, including where it does not win.
 
-It is a library you link, not a server you run (think SQLite, not Pinecone): a
-Zig core with a C ABI, Python bindings, and drop-in LangChain, LlamaIndex, and
-LangGraph stores. The routing graph is
+The implementation is a Zig core with a C ABI, Python bindings, and drop-in
+LangChain, LlamaIndex, and LangGraph stores. The routing graph is
 [HNSW](https://arxiv.org/abs/1603.09320); the quantization is Google Research's
 [TurboQuant](https://arxiv.org/abs/2504.19874).
 
-## When to use quantal
+## Where It Fits
 
 quantal sits between a flat quantizer and a full-precision graph: sub-linear
 search like the graph, compact quantized storage like the quantizer, and a
@@ -31,7 +31,7 @@ scores.
 
 |                 | quantal                        | flat quantizer (turbovec) | full-precision graph (hnswlib) |
 |-----------------|--------------------------------|---------------------------|--------------------------------|
-| Per-query work  | sub-linear (graph routing)     | linear scan, O(n)         | sub-linear (graph routing)     |
+| Query path      | graph-routed                   | linear scan, O(n)         | graph-routed                   |
 | Index memory    | codes + sq8/fp32 rerank store | smallest (codes only)     | largest (fp32 held in graph)   |
 | Final scoring   | fp32 exact, or sq8 rerank      | quantized code scores     | fp32 distances                 |
 
@@ -41,6 +41,9 @@ full-precision graph. Reach for a **flat quantizer** when absolute minimum
 memory is the priority and a per-query scan is acceptable. Reach for a
 **full-precision graph** when you can hold fp32 vectors in RAM and want the
 highest recall tail.
+
+Do not use quantal for low-dimensional vectors when a full-precision graph fits
+in memory. The GloVe-100 result below is the example.
 
 ## Results
 
@@ -56,8 +59,9 @@ recall means the speed comparison is made at the same result quality.
 
 ### High-dimensional embeddings (DBpedia, text-embedding-3-large, d=1536)
 
-At 1M vectors, single thread. Cells show QPS at the measured recall for the
-first operating point that meets each threshold:
+At 1M vectors, single thread. The table samples three points from the plotted
+frontier, not separate tuned runs. Cells show QPS at the measured recall for
+the first operating point that meets each threshold:
 
 ![DBpedia 1M: recall vs QPS](docs/frontier_dbpedia1m.svg)
 
@@ -99,6 +103,21 @@ Full methodology, raw logs, and the regeneration scripts
 ([`benchmarks/ann_frontier.py`](benchmarks/ann_frontier.py),
 [`benchmarks/plot_frontier.py`](benchmarks/plot_frontier.py)) are in
 [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+
+Reproduce the 1M DBpedia run and redraw the README frontier plots:
+
+```bash
+python benchmarks/ann_frontier.py \
+  --base data/dbpedia1536_1m_base.fvecs \
+  --query data/dbpedia1536_1m_query.fvecs \
+  --indexes quantal,hnswlib,faiss-hnsw,turbovec \
+  --out benchmarks/frontier_dbpedia1m.json
+python benchmarks/plot_frontier.py \
+  benchmarks/frontier_dbpedia100k.json \
+  benchmarks/frontier_dbpedia1m.json \
+  benchmarks/frontier_glove100.json \
+  --outdir docs
+```
 
 ## Install
 
