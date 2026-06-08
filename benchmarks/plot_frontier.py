@@ -52,6 +52,15 @@ def _corpus(data):
     return f"{n/1e6:.0f}M" if n >= 1_000_000 else f"{n/1e3:.0f}k"
 
 
+def _name(data):
+    ds = data.get("dataset", "").lower()
+    if "dbpedia" in ds:
+        return "DBpedia-1536"
+    if "glove" in ds:
+        return "GloVe-100"
+    return data.get("dataset", "dataset")
+
+
 def frontier_plot(data, out):
     fig, ax = plt.subplots(figsize=(7.2, 4.6), dpi=140)
     _style_ax(ax)
@@ -75,7 +84,7 @@ def frontier_plot(data, out):
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax.set_xlabel(f"recall@{data['k']}  (higher is better)", color=INK, fontsize=10)
     ax.set_ylabel("queries / sec, single thread (log, higher is better)", color=INK, fontsize=10)
-    ax.set_title(f"DBpedia-1536, {_corpus(data)} vectors: recall vs QPS",
+    ax.set_title(f"{_name(data)}, {_corpus(data)} vectors: recall vs QPS",
                  color=INK, loc="left", fontweight="bold", fontsize=12)
     ax.legend(frameon=False, labelcolor=INK, fontsize=9, loc="upper right")
     fig.tight_layout()
@@ -106,7 +115,7 @@ def memory_plot(data, out):
                 f"{mb:,.0f} MB  (max recall {rec:.3f})", va="center", color=MUTED, fontsize=8.5)
     ax.set_xlim(0, max(sizes) * 1.35)
     ax.set_xlabel("index size on disk, MB  (lower is better)", color=INK, fontsize=10)
-    ax.set_title(f"DBpedia-1536, {_corpus(data)} vectors: index memory",
+    ax.set_title(f"{_name(data)}, {_corpus(data)} vectors: index memory",
                  color=INK, loc="left", fontweight="bold", fontsize=12)
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight")

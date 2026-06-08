@@ -85,9 +85,12 @@ recall near 0.49 at this dimensionality.
 
 quantal targets the 384-3072 range, and below it the picture flips. On GloVe-100
 (d=100, 1.2M vectors) the graphs win the frontier outright: at matched ~0.84
-recall, hnswlib does about 4200 QPS to quantal's about 1700. On low-dimensional
-data a full-precision graph is the better tool; auto-widened routing codes
-narrow the gap but do not close it.
+recall, hnswlib does about 4000 QPS to quantal's about 1700, and there is no
+memory advantage either (601 vs 649 MB) because fp32 vectors are small at low
+dimension. On low-dimensional data a full-precision graph is the better tool;
+auto-widened routing codes narrow the gap but do not close it.
+
+![GloVe-100: recall vs QPS](docs/frontier_glove100.svg)
 
 Full methodology, raw logs, and the regeneration scripts
 ([`benchmarks/ann_frontier.py`](benchmarks/ann_frontier.py),

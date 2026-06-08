@@ -1,0 +1,76 @@
+{
+  "dataset": "glove-100-angular.hdf5",
+  "k": 10,
+  "n_train": 1183514,
+  "n_test": 1000,
+  "metric": "angular",
+  "indexes": {
+    "quantal": {
+      "build_s": 70.28,
+      "bytes": 601063112,
+      "points": [
+        {
+          "knob": "m=64",
+          "recall": 0.5902,
+          "qps": 5252.6
+        },
+        {
+          "knob": "m=128",
+          "recall": 0.6937,
+          "qps": 3827.7
+        },
+        {
+          "knob": "m=256",
+          "recall": 0.7743,
+          "qps": 2657.7
+        },
+        {
+          "knob": "m=512",
+          "recall": 0.8333,
+          "qps": 1662.6
+        },
+        {
+          "knob": "m=1024",
+          "recall": 0.8725,
+          "qps": 911.7
+        }
+      ]
+    },
+    "hnswlib": {
+      "build_s": 96.77,
+      "bytes": 649240364,
+      "points": [
+        {
+          "knob": "ef=16",
+          "recall": 0.5572,
+          "qps": 17024.6
+        },
+        {
+          "knob": "ef=32",
+          "recall": 0.6756,
+          "qps": 10620.5
+        },
+        {
+          "knob": "ef=64",
+          "recall": 0.7661,
+          "qps": 6412.0
+        },
+        {
+          "knob": "ef=128",
+          "recall": 0.8356,
+          "qps": 4024.4
+        },
+        {
+          "knob": "ef=256",
+          "recall": 0.8864,
+          "qps": 2262.2
+        },
+        {
+          "knob": "ef=512",
+          "recall": 0.9288,
+          "qps": 1207.2
+        }
+      ]
+    }
+  }
+}

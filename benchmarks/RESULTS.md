@@ -1,4 +1,198 @@
-# quantal vs turbovec — same machine, same data, same metric
+# quantal benchmarks
+
+quantal on the recall/QPS frontier against the recognized baselines, followed by
+the supporting experiments (routing-bit sweeps, dimension crossover, rerank
+store, the turbovec head-to-head, the GloVe-100 postmortem) that informed the
+design.
+
+## Methodology
+
+- **Hardware:** AMD Ryzen 5 7640U (Zen 4, AVX-512), 6C/12T. QPS is single-thread,
+  one query at a time (the ann-benchmarks convention); every library is pinned to
+  a single thread for the timed queries.
+- **Baselines:** hnswlib 0.8.0 and FAISS-HNSW (faiss-cpu 1.14.2), the graph state
+  of the art for high-recall ANN; turbovec and FAISS-IVFPQ, flat quantizers.
+- **Metric:** cosine, computed as inner product over L2-normalized vectors for
+  every index. recall@10 against exact top-10 ground truth (a FAISS flat index).
+- **Memory:** serialized index size, the one measure consistent across libraries.
+  Build time is reported separately, never folded into QPS.
+- **Harness:** `benchmarks/ann_frontier.py` sweeps each index's query-time knob
+  (quantal `m`, hnswlib / FAISS-HNSW `efSearch`, IVFPQ `nprobe`, turbovec
+  `bit_width`); `benchmarks/plot_frontier.py` renders the charts.
+
+Reproduce (quantal needs a library for the dataset dim: `zig build
+-Doptimize=ReleaseFast -Dc-dim=1536`, then point `QUANTAL_LIB` at
+`zig-out/lib/libquantal.so`):
+
+    python benchmarks/ann_frontier.py \
+        --base data/dbpedia1536_1m_base.fvecs --query data/dbpedia1536_1m_query.fvecs \
+        --indexes quantal,hnswlib,faiss-hnsw,turbovec --out benchmarks/frontier_dbpedia1m.json
+
+## Frontier vs the field — DBpedia-1536 (text-embedding-3-large)
+
+quantal's target regime. Matched-recall summary, 1M vectors, single thread:
+
+| recall@10 | quantal  | hnswlib | FAISS-HNSW |
+|-----------|----------|---------|------------|
+| ~0.95     | 1770 QPS | 1606    | 1502       |
+| ~0.975    | 1174 QPS | 931     | 841        |
+| ~0.99     | 738 QPS  | 372     | 453        |
+
+quantal leads across the practical band at **2.4× less memory** (2.6 GB vs 6.3 GB
+for the fp32 graphs). Full curves below.
+
+### 1M vectors (999,000 base, 1,000 queries, k=10)
+
+quantal — build 135s, index 2,620 MB:
+
+| m | recall@10 | QPS |
+|---|---|---|
+| 64 | 0.9448 | 2037 |
+| 96 | 0.9648 | 1770 |
+| 128 | 0.9736 | 1517 |
+| 192 | 0.9809 | 1174 |
+| 256 | 0.9851 | 999 |
+| 384 | 0.9909 | 738 |
+| 512 | 0.9915 | 612 |
+| 768 | 0.9927 | 439 |
+| 1024 | 0.9937 | 337 |
+
+hnswlib — build 427s, index 6,286 MB:
+
+| efSearch | recall@10 | QPS |
+|---|---|---|
+| 16 | 0.8302 | 3569 |
+| 32 | 0.9081 | 2579 |
+| 64 | 0.9536 | 1606 |
+| 96 | 0.9686 | 1175 |
+| 128 | 0.9766 | 931 |
+| 192 | 0.9829 | 668 |
+| 256 | 0.9880 | 530 |
+| 384 | 0.9916 | 372 |
+| 512 | 0.9937 | 284 |
+
+FAISS-HNSW — build 1,824s, index 6,282 MB:
+
+| efSearch | recall@10 | QPS |
+|---|---|---|
+| 16 | 0.8428 | 3982 |
+| 32 | 0.9183 | 2608 |
+| 64 | 0.9607 | 1502 |
+| 96 | 0.9720 | 1084 |
+| 128 | 0.9781 | 841 |
+| 192 | 0.9867 | 585 |
+| 256 | 0.9905 | 453 |
+| 384 | 0.9940 | 307 |
+| 512 | 0.9958 | 235 |
+
+turbovec — build 44s, index 771 MB: `bits=2` 0.9082 recall @ 24 QPS; `bits=4`
+0.9696 @ 13 QPS (a linear scan, so QPS collapses at 1M).
+
+### 100k vectors (100,000 base, 1,000 queries, k=10)
+
+quantal — build 11s, index 271 MB:
+
+| m | recall@10 | QPS |
+|---|---|---|
+| 64 | 0.9617 | 2574 |
+| 128 | 0.9853 | 1818 |
+| 192 | 0.9916 | 1454 |
+| 256 | 0.9934 | 1180 |
+| 384 | 0.9951 | 883 |
+| 512 | 0.9957 | 700 |
+| 1024 | 0.9961 | 390 |
+
+hnswlib — build 34s, index 629 MB:
+
+| efSearch | recall@10 | QPS |
+|---|---|---|
+| 32 | 0.9225 | 3026 |
+| 64 | 0.9693 | 1789 |
+| 96 | 0.9828 | 1267 |
+| 128 | 0.9889 | 1004 |
+| 192 | 0.9940 | 706 |
+| 256 | 0.9964 | 555 |
+| 512 | 0.9982 | 308 |
+
+FAISS-HNSW — build 130s, index 629 MB:
+
+| efSearch | recall@10 | QPS |
+|---|---|---|
+| 32 | 0.9380 | 3858 |
+| 64 | 0.9774 | 2288 |
+| 96 | 0.9892 | 1641 |
+| 128 | 0.9933 | 1279 |
+| 256 | 0.9980 | 714 |
+| 512 | 0.9993 | 388 |
+
+turbovec — build 5s, index 77 MB: `bits=2` 0.8992 @ 238 QPS; `bits=4` 0.9676 @ 126 QPS.
+
+FAISS-IVFPQ — build 53s, index 15 MB: recall plateaus at **0.486** regardless of
+`nprobe` (1 to 256, QPS 6519 down to 1139). PQ compression to ~15 MB is too lossy
+for high recall at d=1536; it is the wrong tool when high recall is required.
+
+**Reading the numbers**
+
+- quantal sits on or above the graph frontier from recall ~0.94 to ~0.99, at 2.4×
+  less memory, because it stores 3-bit codes + an int8 rerank store rather than
+  fp32 vectors in the graph.
+- The graphs reach the extreme tail (0.996+) that quantal does not; quantal's
+  recall ceiling here is ~0.994.
+- turbovec is the minimum-memory corner, not a speed competitor at scale.
+
+**Caveats (read before quoting)**
+
+- The per-query loop is Python for every index; quantal pays an extra
+  `search_batch` reshape per call, so its real QPS is, if anything, a touch higher
+  than shown. The comparison is conservative for quantal.
+- FAISS-HNSW's build time is inflated by the single-thread pin used for fair query
+  timing (1,824s at 1M, single-threaded) versus multi-threaded hnswlib/quantal
+  builds. Compare QPS, not build time.
+
+## Frontier vs the field — GloVe-100 (the honest weak case)
+
+GloVe-100-angular (1,183,514 base, 1,000 queries, k=10):
+
+![GloVe-100: recall vs QPS](../docs/frontier_glove100.svg)
+
+quantal — build 70s, index 601 MB:
+
+| m | recall@10 | QPS |
+|---|---|---|
+| 64 | 0.5902 | 5253 |
+| 128 | 0.6937 | 3828 |
+| 256 | 0.7743 | 2658 |
+| 512 | 0.8333 | 1663 |
+| 1024 | 0.8725 | 912 |
+
+hnswlib — build 97s, index 649 MB:
+
+| efSearch | recall@10 | QPS |
+|---|---|---|
+| 16 | 0.5572 | 17025 |
+| 32 | 0.6756 | 10621 |
+| 64 | 0.7661 | 6412 |
+| 128 | 0.8356 | 4024 |
+| 256 | 0.8864 | 2262 |
+| 512 | 0.9288 | 1207 |
+
+At matched ~0.83 recall, hnswlib does ~4000 QPS to quantal's ~1660 (about 2.4×
+faster), and it reaches recall (0.93) above quantal's ceiling here (~0.87). There
+is no memory advantage either at d=100 (601 vs 649 MB), because fp32 vectors are
+small when the dimension is small. quantal targets the d=384-3072 range; below
+it a full-precision graph is the better tool. The routing-code analysis that
+narrows (but does not close) the low-dim gap is in the experiments below.
+
+---
+
+# Supporting experiments and history
+
+The sections below are the original turbovec head-to-head and the design
+experiments (routing bits, dimension crossover, rerank store) that the frontier
+results above supersede as the headline comparison, but that record how quantal
+arrived at its defaults.
+
+## quantal vs turbovec — same machine, same data, same metric
 
 - **Hardware:** AMD Ryzen 5 7640U (Zen 4, AVX-512), 6C/12T, single-threaded unless noted
 - **Data:** DBpedia-entities OpenAI3 text-embedding-3-large, d=1536, first 100,000
@@ -53,10 +247,10 @@ serial build (GloVe 0.746/0.884 vs 0.739/0.883).
 
 | dimension | turbovec | quantal |
 |---|---|---|
-| Resident memory | **75.5 MiB** (4-bit, no originals) | 276 MiB with sq8 (75.5 payloads + 54 graph + 147 sq8 store) |
+| Index storage estimate | **75.5 MiB** (4-bit, no originals) | 276 MiB with sq8 (75.5 payloads + 54 graph + 147 sq8 store) |
 | recall1@k tail | →1.0 by k=4 (exhaustive) | plateaus at routing recall (raise m to push it) |
 | Recall1@k convergence guarantee | exhaustive scan, unconditional | requires the true NN to be routed into the beam |
-| Maturity | PyPI/crates releases, framework integrations | Zig library + C ABI + ctypes Python wrapper; deletes, allowlist filtering, save/load — no packaged releases yet |
+| Maturity | PyPI/crates releases, framework integrations | PyPI package (`quantaldb`) + C ABI + ctypes Python wrapper; deletes, allowlist filtering, save/load; no Rust crate yet |
 
 Notes:
 - The latency gap grows with corpus size: turbovec scans 100% of vectors per query;
@@ -64,10 +258,10 @@ Notes:
 
 ## 1M-vector run (999,000 base + 1,000 held-out queries, same protocol)
 
-Same machine, same metric; turbovec ingested in 100k chunks (a single
-999k-row `add()` was OOM-killed at 21 GB RSS on this 30 GiB box — see
-RUN_1M.md). quantal-bench memory: 754.6 MiB payloads + 536.5 MiB graph +
-1467.2 MiB sq8 store vs 5853.5 MiB raw fp32.
+Same machine, same metric; turbovec ingested in 100k chunks. A single
+999k-row `add()` was OOM-killed at 21 GB RSS on this 30 GiB box. See
+RUN_1M.md. quantal-bench index storage estimate: 754.6 MiB payloads +
+536.5 MiB graph + 1467.2 MiB sq8 store vs 5853.5 MiB raw fp32.
 
 ### Multi-threaded (12 threads)
 
