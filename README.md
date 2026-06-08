@@ -6,15 +6,15 @@
 
 quantal is an embedded vector index that combines a navigable graph with
 quantized codes. A 1-bit SimHash graph routes each query to a few hundred
-candidates, 3-bit TurboQuant codes rerank that pool, and an exact pass settles
-the final order. Search is sub-linear (roughly O(log n), not a full scan), the
-index stores compact quantized codes instead of full-precision vectors, and the
-final ranking is exact.
+candidates, 3-bit TurboQuant codes score that pool, and a final rerank pass
+uses a stored rerank representation to order the returned candidates. Search is
+sub-linear (roughly O(log n), not a full scan), and the default index stores
+compact quantized data instead of full-precision vectors.
 
 It began as a question: how close can a quantized index get to a full-precision
-graph on the recall/latency frontier while spending far less memory? The
-[Results](#results) are the measured answer, on standard datasets against the
-usual baselines, including where it does not win.
+graph on the recall/QPS frontier while spending less memory? The
+[Results](#results) section reports the measurements on standard datasets
+against same-machine baselines, including where it does not win.
 
 It is a library you link, not a server you run (think SQLite, not Pinecone): a
 Zig core with a C ABI, Python bindings, and drop-in LangChain, LlamaIndex, and
@@ -25,59 +25,63 @@ LangGraph stores. The routing graph is
 ## When to use quantal
 
 quantal sits between a flat quantizer and a full-precision graph: sub-linear
-search like the graph, compact quantized storage like the quantizer, and an
-exact final pass that neither the flat quantizer's approximate scores nor a
-graph's reached-pool distances give you for free.
+search like the graph, compact quantized storage like the quantizer, and a
+rerank stage that uses stored vectors instead of ending on compressed-code
+scores.
 
 |                 | quantal                        | flat quantizer (turbovec) | full-precision graph (hnswlib) |
 |-----------------|--------------------------------|---------------------------|--------------------------------|
 | Per-query work  | sub-linear (graph routing)     | linear scan, O(n)         | sub-linear (graph routing)     |
-| Index memory    | codes + int8/fp32 rerank store | smallest (codes only)     | largest (fp32 held in graph)   |
-| Final ranking   | exact (fp32/int8 rerank)       | approximate (quantized)   | exact (fp32)                   |
+| Index memory    | codes + sq8/fp32 rerank store | smallest (codes only)     | largest (fp32 held in graph)   |
+| Final scoring   | fp32 exact, or sq8 rerank      | quantized code scores     | fp32 distances                 |
 
 Reach for **quantal** with high-dimensional embeddings (384-3072) when you want
-search that stays fast as the corpus grows and a final ordering settled exactly.
-Reach for a **flat quantizer** when absolute minimum memory is the priority and
-a per-query scan is acceptable. Reach for a **full-precision graph** when you can
-hold fp32 vectors in RAM and want to push peak QPS.
+search that stays fast as the corpus grows, with lower memory than a
+full-precision graph. Reach for a **flat quantizer** when absolute minimum
+memory is the priority and a per-query scan is acceptable. Reach for a
+**full-precision graph** when you can hold fp32 vectors in RAM and want the
+highest recall tail.
 
 ## Results
 
-quantal measured against the recognized baselines on the
-[ann-benchmarks](https://github.com/erikbern/ann-benchmarks) protocol: hnswlib
-and FAISS-HNSW (the graph state of the art for high-recall ANN), and turbovec
-and FAISS-IVFPQ (flat quantizers). Same machine (a Ryzen 7640U laptop), cosine
-via L2-normalized inner product for every index, recall@10 against an exact
-search, QPS measured single-thread one query at a time. Harness:
-[`benchmarks/ann_frontier.py`](benchmarks/ann_frontier.py). recall@10 is the
-average fraction of the true top-10 neighbors returned; matched recall means the
-speed comparison is made at the same result quality.
+quantal was measured against standard same-machine baselines on the
+[ann-benchmarks](https://github.com/erikbern/ann-benchmarks) recall/QPS view:
+hnswlib and FAISS-HNSW for full-precision graph search, turbovec for flat
+TurboQuant scan, and FAISS-IVFPQ for compressed IVF-PQ. Same machine (a Ryzen
+7640U laptop), cosine via L2-normalized inner product for every index,
+recall@10 against exact top-10 ground truth, QPS measured single-thread one
+query at a time. Harness: [`benchmarks/ann_frontier.py`](benchmarks/ann_frontier.py).
+recall@10 is the average fraction of the true top-10 neighbors returned; matched
+recall means the speed comparison is made at the same result quality.
 
 ### High-dimensional embeddings (DBpedia, text-embedding-3-large, d=1536)
 
-At 1M vectors, single thread:
+At 1M vectors, single thread. Cells show QPS at the measured recall for the
+first operating point that meets each threshold:
 
 ![DBpedia 1M: recall vs QPS](docs/frontier_dbpedia1m.svg)
 
-| recall@10 | quantal  | hnswlib | FAISS-HNSW |
-|-----------|----------|---------|------------|
-| ~0.95     | 1770 QPS | 1606    | 1502       |
-| ~0.975    | 1174 QPS | 931     | 841        |
-| ~0.99     | 738 QPS  | 372     | 453        |
+| minimum recall@10 | quantal      | hnswlib      | FAISS-HNSW   |
+|-------------------|--------------|--------------|--------------|
+| >=0.95            | 1770 @ 0.965 | 1606 @ 0.954 | 1502 @ 0.961 |
+| >=0.975           | 1174 @ 0.981 | 931 @ 0.977  | 841 @ 0.978  |
+| >=0.99            | 739 @ 0.991  | 372 @ 0.992  | 453 @ 0.991  |
 
-Across recall 0.95-0.99 quantal returns more queries per second than either
-graph; past recall 0.996 the graphs reach a tail quantal does not. The index is
-smaller because quantal stores 3-bit codes plus an int8 rerank store rather than
-full-precision vectors in the graph: ~2.6 GB against ~6.3 GB for the fp32 graphs.
+Across these measured targets, quantal returns more queries per second than
+either full-precision graph while using a smaller serialized index: ~2.6 GB
+against ~6.3 GB. The tradeoff is the extreme recall tail. In this 1M run,
+quantal tops out at 0.9937 recall@10; FAISS-HNSW reaches 0.9958 at lower QPS.
 
 ![DBpedia 1M: index memory](docs/memory_dbpedia1m.svg)
 
-The 100k frontier has the same shape:
+The 100k frontier has the same shape, and the full-precision graphs reach
+farther into the extreme recall tail:
 
 ![DBpedia 100k: recall vs QPS](docs/frontier_dbpedia100k.svg)
 
-The flat quantizers use less memory still: at 1M, turbovec's linear scan runs at
-~13-24 QPS, and FAISS-IVFPQ's compression holds recall near 0.49 at this
+The compressed baselines define the low-memory corner, not the high-recall
+frontier. At 1M, turbovec's linear scan uses 771 MB and runs at ~13-24 QPS. On
+the 100k slice, FAISS-IVFPQ uses 15 MB, but recall@10 plateaus at 0.486 at this
 dimensionality.
 
 ### Low-dimensional data (GloVe-100)
@@ -148,11 +152,13 @@ from quantal.langgraph_store import QuantalStore        # agent memory
 1. **Route (1-bit).** Each vector is preconditioned with a random rotation and
    reduced to a sign-bit (SimHash) code. An HNSW-style graph navigates these by
    Hamming distance. This is cheap and enough to reach the right neighborhood.
-2. **Rerank (3-bit).** Candidates are scored with 3-bit TurboQuant codes via a
+2. **Score (3-bit).** Candidates are scored with 3-bit TurboQuant codes via a
    lookup-table kernel, with a per-vector scalar that keeps the inner-product
    estimate unbiased.
-3. **Exact.** The top of that pool is rescored with the stored vectors (fp32 or
-   int8), so quantization noise can't reorder the final candidate pool.
+3. **Final rerank.** The top of that pool is rescored from the rerank store.
+   The fp32 mode computes exact inner products inside the candidate pool. The
+   default sq8 mode stores one byte per coordinate plus one scale per vector and
+   was measured close to fp32 at much lower memory.
 
 Queries are allocation-free: the search path takes a preallocated context and
 never touches the allocator.
@@ -167,18 +173,18 @@ zig build -Doptimize=ReleaseFast -Dc-dim=768   # build the C library + binaries
 
 ## Status
 
-Research-grade and benchmarked on a single laptop; numbers should be taken as
-directional, not a leaderboard. The Zig core and C ABI are tested in CI on
-Linux, macOS, and Windows; the Python package and framework wrappers are tested
-on Linux and macOS, with wheel smoke tests on every published platform. Wheels
-are published to PyPI as `quantaldb`; a Rust crate is not published yet.
+Benchmarked on a single laptop. The runs are single-machine and single-run, so
+expect some variance. The Zig core and C ABI are tested in CI on Linux, macOS,
+and Windows; the Python package and framework wrappers are tested on Linux and
+macOS, with wheel smoke tests on every published platform. Wheels are published
+to PyPI as `quantaldb`; a Rust crate is not published yet.
 
 ## How this was built
 
 The research direction, architecture, and benchmarking are human. The
 implementation (the Zig core, the Python bindings, the framework wrappers) was
-written with heavy AI assistance. Every number in this README was actually
-measured, and the generated code was reviewed and tested.
+written with AI assistance. Every number in this README was measured, and the
+generated code was reviewed and tested.
 
 ## References
 

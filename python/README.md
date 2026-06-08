@@ -1,7 +1,7 @@
 # quantal (Python)
 
-Embedded, in-memory vector index — 1-bit graph routing + 3-bit TurboQuant
-payloads + exact rerank — with a ctypes binding to the Zig core.
+Embedded, in-memory vector index with 1-bit graph routing, 3-bit TurboQuant
+payloads, exact rerank, and a ctypes binding to the Zig core.
 
 ## Install
 
@@ -12,16 +12,16 @@ pip install -e python      # from a source checkout (builds libs on demand)
 quantal fixes the vector dimension at compile time, so there is one native
 library per dimension. The binding resolves it automatically, in order:
 
-1. **`QUANTAL_LIB`** — an explicit library path (overrides everything).
-2. **Bundled binary** — the published wheels carry prebuilt libraries for the
+1. **`QUANTAL_LIB`**: an explicit library path (overrides everything).
+2. **Bundled binary**: the published wheels carry prebuilt libraries for the
    common embedding dimensions (256, 384, 512, 768, 1024, 1536, 3072), so
-   `pip install quantal` works with **no toolchain** for those dims.
+   `pip install quantaldb` works with **no toolchain** for those dims.
 3. **Cached build** under `~/.cache/quantal/`.
-4. **Build on demand** — from a source checkout with `zig` on PATH,
+4. **Build on demand**: from a source checkout with `zig` on PATH,
    `Index(dim=N)` builds and caches the library for any other dimension.
 
-So a stock embedding model "just works" from a wheel; an unusual dimension
-needs either a source checkout (auto-build) or a manual
+Common embedding dimensions can use the bundled wheel; any other dimension
+needs either a source checkout with auto-build or a manual
 `zig build -Dc-dim=N` + `QUANTAL_LIB`.
 
 ### Building wheels
@@ -33,7 +33,7 @@ python -m build --wheel              # -> dist/quantal-...-py3-none-<platform>.w
 ```
 
 `build_libs.py --target x86_64-linux-gnu.2.28` pins glibc so the Linux wheel
-is manylinux-compatible (Zig cross-compiles directly — no Docker). CI in
+is manylinux-compatible. Zig cross-compiles directly, no Docker needed. CI in
 `.github/workflows/wheels.yml` builds Linux/macOS/Windows wheels this way.
 
 ## Core API
@@ -52,8 +52,8 @@ with Index(dim=384) as index:
 index = Index.load("docs.tq")               # dimension read from the file
 ```
 
-`search_filtered(query, allowlist, k)` restricts results to a set of ids
-(exact scoring over the allowlist — for tenant/ACL filtering).
+`search_filtered(query, allowlist, k)` restricts results to a set of ids. It
+uses exact scoring over the allowlist for tenant and ACL filtering.
 
 ## LangChain
 
@@ -89,7 +89,7 @@ hits = index.as_retriever(similarity_top_k=5).retrieve("query")
 
 ## LangGraph (agent memory)
 
-A `BaseStore` with semantic search — local, fast short/long-term memory for
+A `BaseStore` with semantic search for local short/long-term memory in
 agent graphs. Per-namespace search is served by quantal's exact allowlist
 scoring, so namespaces are isolated precisely.
 

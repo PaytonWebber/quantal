@@ -36,7 +36,7 @@ quantal's target regime. Matched-recall summary, 1M vectors, single thread:
 |-----------|----------|---------|------------|
 | ~0.95     | 1770 QPS | 1606    | 1502       |
 | ~0.975    | 1174 QPS | 931     | 841        |
-| ~0.99     | 738 QPS  | 372     | 453        |
+| ~0.99     | 739 QPS  | 372     | 453        |
 
 quantal leads across the practical band at **2.4× less memory** (2.6 GB vs 6.3 GB
 for the fp32 graphs). Full curves below.
@@ -52,7 +52,7 @@ quantal — build 135s, index 2,620 MB:
 | 128 | 0.9736 | 1517 |
 | 192 | 0.9809 | 1174 |
 | 256 | 0.9851 | 999 |
-| 384 | 0.9909 | 738 |
+| 384 | 0.9909 | 739 |
 | 512 | 0.9915 | 612 |
 | 768 | 0.9927 | 439 |
 | 1024 | 0.9937 | 337 |

@@ -6,243 +6,283 @@
   "metric": "cosine",
   "indexes": {
     "quantal": {
-      "build_s": 10.72,
+      "build_s": 10.54,
       "bytes": 270720514,
       "points": [
         {
           "knob": "m=64",
           "recall": 0.9617,
-          "qps": 2573.9
+          "qps": 2504.2,
+          "qps_mt": 17104.1
         },
         {
           "knob": "m=96",
           "recall": 0.9792,
-          "qps": 2159.1
+          "qps": 2202.5,
+          "qps_mt": 16527.7
         },
         {
           "knob": "m=128",
           "recall": 0.9853,
-          "qps": 1817.9
+          "qps": 1848.2,
+          "qps_mt": 15928.1
         },
         {
           "knob": "m=192",
           "recall": 0.9916,
-          "qps": 1453.7
+          "qps": 1418.5,
+          "qps_mt": 13267.5
         },
         {
           "knob": "m=256",
           "recall": 0.9934,
-          "qps": 1180.2
+          "qps": 1182.0,
+          "qps_mt": 9627.3
         },
         {
           "knob": "m=384",
           "recall": 0.9951,
-          "qps": 883.4
+          "qps": 848.7,
+          "qps_mt": 5517.8
         },
         {
           "knob": "m=512",
           "recall": 0.9957,
-          "qps": 700.1
+          "qps": 591.8,
+          "qps_mt": 6266.3
         },
         {
           "knob": "m=768",
           "recall": 0.9959,
-          "qps": 497.9
+          "qps": 506.9,
+          "qps_mt": 4359.8
         },
         {
           "knob": "m=1024",
           "recall": 0.9961,
-          "qps": 389.6
+          "qps": 410.6,
+          "qps_mt": 3482.0
         }
       ]
     },
     "hnswlib": {
-      "build_s": 33.64,
+      "build_s": 32.83,
       "bytes": 629244136,
       "points": [
         {
           "knob": "ef=16",
-          "recall": 0.8486,
-          "qps": 4816.7
+          "recall": 0.8473,
+          "qps": 4748.5,
+          "qps_mt": 19708.2
         },
         {
           "knob": "ef=24",
-          "recall": 0.8948,
-          "qps": 3735.9
+          "recall": 0.9003,
+          "qps": 3563.8,
+          "qps_mt": 14431.3
         },
         {
           "knob": "ef=32",
-          "recall": 0.9225,
-          "qps": 3026.2
+          "recall": 0.9265,
+          "qps": 2952.2,
+          "qps_mt": 11793.5
         },
         {
           "knob": "ef=48",
-          "recall": 0.9542,
-          "qps": 2255.0
+          "recall": 0.9557,
+          "qps": 2198.4,
+          "qps_mt": 8875.7
         },
         {
           "knob": "ef=64",
-          "recall": 0.9693,
-          "qps": 1789.0
+          "recall": 0.9702,
+          "qps": 1768.4,
+          "qps_mt": 7053.8
         },
         {
           "knob": "ef=96",
-          "recall": 0.9828,
-          "qps": 1267.2
+          "recall": 0.9826,
+          "qps": 1262.5,
+          "qps_mt": 5074.9
         },
         {
           "knob": "ef=128",
-          "recall": 0.9889,
-          "qps": 1004.3
+          "recall": 0.9891,
+          "qps": 1005.7,
+          "qps_mt": 3994.2
         },
         {
           "knob": "ef=192",
           "recall": 0.994,
-          "qps": 706.3
+          "qps": 714.4,
+          "qps_mt": 2732.2
         },
         {
           "knob": "ef=256",
           "recall": 0.9964,
-          "qps": 555.3
+          "qps": 562.9,
+          "qps_mt": 2175.3
         },
         {
           "knob": "ef=384",
           "recall": 0.9978,
-          "qps": 393.5
+          "qps": 396.5,
+          "qps_mt": 1589.7
         },
         {
           "knob": "ef=512",
           "recall": 0.9982,
-          "qps": 308.2
+          "qps": 312.3,
+          "qps_mt": 1248.4
         }
       ]
     },
     "faiss-hnsw": {
-      "build_s": 130.27,
+      "build_s": 136.54,
       "bytes": 628833274,
       "points": [
         {
           "knob": "ef=16",
           "recall": 0.862,
-          "qps": 6057.2
+          "qps": 5552.7,
+          "qps_mt": 15350.8
         },
         {
           "knob": "ef=24",
           "recall": 0.9092,
-          "qps": 4733.4
+          "qps": 4313.7,
+          "qps_mt": 11715.4
         },
         {
           "knob": "ef=32",
           "recall": 0.938,
-          "qps": 3858.3
+          "qps": 3522.3,
+          "qps_mt": 9594.9
         },
         {
           "knob": "ef=48",
           "recall": 0.9626,
-          "qps": 2833.5
+          "qps": 2604.5,
+          "qps_mt": 6922.2
         },
         {
           "knob": "ef=64",
           "recall": 0.9774,
-          "qps": 2288.4
+          "qps": 2055.4,
+          "qps_mt": 5367.8
         },
         {
           "knob": "ef=96",
           "recall": 0.9892,
-          "qps": 1641.1
+          "qps": 1484.8,
+          "qps_mt": 3922.4
         },
         {
           "knob": "ef=128",
           "recall": 0.9933,
-          "qps": 1278.8
+          "qps": 1168.1,
+          "qps_mt": 3064.7
         },
         {
           "knob": "ef=192",
           "recall": 0.996,
-          "qps": 904.1
+          "qps": 837.3,
+          "qps_mt": 2224.2
         },
         {
           "knob": "ef=256",
           "recall": 0.998,
-          "qps": 714.2
+          "qps": 654.6,
+          "qps_mt": 1449.4
         },
         {
           "knob": "ef=384",
           "recall": 0.999,
-          "qps": 500.1
+          "qps": 456.8,
+          "qps_mt": 1186.6
         },
         {
           "knob": "ef=512",
           "recall": 0.9993,
-          "qps": 388.0
+          "qps": 360.7,
+          "qps_mt": 917.9
         }
       ]
     },
     "faiss-ivfpq": {
-      "build_s": 52.59,
+      "build_s": 54.2,
       "bytes": 15072692,
       "points": [
         {
           "knob": "nprobe=1",
           "recall": 0.4039,
-          "qps": 6519.2
+          "qps": 5330.7,
+          "qps_mt": 42384.2
         },
         {
           "knob": "nprobe=2",
           "recall": 0.4563,
-          "qps": 6643.2
+          "qps": 7024.6,
+          "qps_mt": 41444.2
         },
         {
           "knob": "nprobe=4",
           "recall": 0.4784,
-          "qps": 6332.7
+          "qps": 6733.9,
+          "qps_mt": 37257.8
         },
         {
           "knob": "nprobe=8",
           "recall": 0.484,
-          "qps": 5892.7
+          "qps": 5901.6,
+          "qps_mt": 36425.7
         },
         {
           "knob": "nprobe=16",
           "recall": 0.4852,
-          "qps": 5140.8
+          "qps": 5392.3,
+          "qps_mt": 31944.7
         },
         {
           "knob": "nprobe=32",
           "recall": 0.4855,
-          "qps": 4120.5
+          "qps": 4272.3,
+          "qps_mt": 25788.0
         },
         {
           "knob": "nprobe=64",
           "recall": 0.4856,
-          "qps": 3044.5
+          "qps": 3041.9,
+          "qps_mt": 16725.7
         },
         {
           "knob": "nprobe=128",
           "recall": 0.4856,
-          "qps": 1949.6
+          "qps": 1942.9,
+          "qps_mt": 10641.7
         },
         {
           "knob": "nprobe=256",
           "recall": 0.4856,
-          "qps": 1139.3
+          "qps": 1144.9,
+          "qps_mt": 6404.2
         }
       ],
       "config": "nlist=1024,m_pq=64,nbits=8"
     },
     "turbovec": {
-      "build_s": 4.81,
+      "build_s": 9.94,
       "bytes": 77212306,
       "points": [
         {
           "knob": "bits=2",
           "recall": 0.8992,
-          "qps": 237.8
+          "qps": 237.2
         },
         {
           "knob": "bits=4",
           "recall": 0.9676,
-          "qps": 125.7
+          "qps": 126.3
         }
       ]
     }

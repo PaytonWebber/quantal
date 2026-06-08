@@ -65,22 +65,33 @@ def frontier_plot(data, out):
     fig, ax = plt.subplots(figsize=(7.2, 4.6), dpi=140)
     _style_ax(ax)
     xmin = 1.0
+    series = []
     for name, res in data["indexes"].items():
-        st = STYLE.get(name, {"color": "#888", "label": name, "lw": 1.5, "z": 3, "ms": 4})
         pts = sorted(res["points"], key=lambda p: p["recall"])
         xs = [p["recall"] for p in pts]
         ys = [p["qps"] for p in pts]
         if not xs:
             continue
-        ax.plot(xs, ys, marker="o", ms=st["ms"], color=st["color"], lw=st["lw"],
-                zorder=st["z"], label=st["label"])
-        # Track a sensible left bound from the real contenders (skip IVFPQ's
-        # low-recall plateau so it doesn't squash the useful region).
+        series.append((name, xs, ys))
+        # Track the left bound from visible high-recall series. IVFPQ's
+        # low-recall plateau would otherwise squash the useful region.
         if name != "faiss-ivfpq":
             xmin = min(xmin, min(xs))
 
+    xleft = max(0.80, xmin - 0.01)
+    for name, xs, ys in series:
+        st = STYLE.get(name, {"color": "#888", "label": name, "lw": 1.5, "z": 3, "ms": 4})
+        if max(xs) < xleft:
+            continue
+        visible = [(x, y) for x, y in zip(xs, ys) if x >= xleft]
+        if not visible:
+            continue
+        vx, vy = zip(*visible)
+        ax.plot(vx, vy, marker="o", ms=st["ms"], color=st["color"], lw=st["lw"],
+                zorder=st["z"], label=st["label"])
+
     ax.set_yscale("log")
-    ax.set_xlim(max(0.80, xmin - 0.01), 1.002)
+    ax.set_xlim(xleft, 1.002)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax.set_xlabel(f"recall@{data['k']}  (higher is better)", color=INK, fontsize=10)
     ax.set_ylabel("queries / sec, single thread (log, higher is better)", color=INK, fontsize=10)

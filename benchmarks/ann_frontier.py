@@ -34,7 +34,8 @@ note rather than aborting the run.
 # single-thread QPS measurement is honest.
 import os
 
-for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "RAYON_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
 import argparse
@@ -116,8 +117,21 @@ def time_queries(query_fn, test, k):
     return returned, qps
 
 
-def result(knob, recall, qps):
-    return {"knob": knob, "recall": round(recall, 4), "qps": round(qps, 1)}
+def time_batch(batch_fn, test):
+    """Run `batch_fn(test)` once (the whole query set, all threads) and return
+    throughput in queries/sec. Used for the multi-threaded number; the result
+    set is identical to the single-thread pass, so recall is reused."""
+    t0 = time.perf_counter()
+    batch_fn(test)
+    elapsed = time.perf_counter() - t0
+    return len(test) / elapsed if elapsed > 0 else 0.0
+
+
+def result(knob, recall, qps, qps_mt=None):
+    r = {"knob": knob, "recall": round(recall, 4), "qps": round(qps, 1)}
+    if qps_mt is not None:
+        r["qps_mt"] = round(qps_mt, 1)
+    return r
 
 
 # ---- index runners --------------------------------------------------------
@@ -148,7 +162,8 @@ def run_quantal(train, test, truth, k, args):
             _, ids, counts = idx.search_batch(q.reshape(1, -1), k=k, m=m, threads=1)
             return ids[0, : counts[0]]
         returned, qps = time_queries(query, test, k)
-        points.append(result(f"m={m}", recall_at_k(returned, truth, k), qps))
+        qps_mt = time_batch(lambda t, m=m: idx.search_batch(t, k=k, m=m, threads=args.threads), test)
+        points.append(result(f"m={m}", recall_at_k(returned, truth, k), qps, qps_mt))
     return {"build_s": round(build_s, 2), "bytes": size, "points": points}
 
 
@@ -174,7 +189,8 @@ def run_hnswlib(train, test, truth, k, args):
             labels, _ = p.knn_query(q.reshape(1, -1), k=k, num_threads=1)
             return labels[0]
         returned, qps = time_queries(query, test, k)
-        points.append(result(f"ef={ef}", recall_at_k(returned, truth, k), qps))
+        qps_mt = time_batch(lambda t, p=p: p.knn_query(t, k=k, num_threads=args.threads), test)
+        points.append(result(f"ef={ef}", recall_at_k(returned, truth, k), qps, qps_mt))
     return {"build_s": round(build_s, 2), "bytes": size, "points": points}
 
 
@@ -225,8 +241,12 @@ def run_faiss_hnsw(train, test, truth, k, args):
         def query(q, index=index):
             _, ids = index.search(q.reshape(1, -1), k)
             return ids[0]
+        faiss.omp_set_num_threads(1)
         returned, qps = time_queries(query, test, k)
-        points.append(result(f"ef={ef}", recall_at_k(returned, truth, k), qps))
+        faiss.omp_set_num_threads(args.threads)
+        qps_mt = time_batch(lambda t, index=index: index.search(t, k), test)
+        faiss.omp_set_num_threads(1)
+        points.append(result(f"ef={ef}", recall_at_k(returned, truth, k), qps, qps_mt))
     return {"build_s": round(build_s, 2), "bytes": size, "points": points}
 
 
@@ -255,8 +275,12 @@ def run_faiss_ivfpq(train, test, truth, k, args):
         def query(q, index=index):
             _, ids = index.search(q.reshape(1, -1), k)
             return ids[0]
+        faiss.omp_set_num_threads(1)
         returned, qps = time_queries(query, test, k)
-        points.append(result(f"nprobe={nprobe}", recall_at_k(returned, truth, k), qps))
+        faiss.omp_set_num_threads(args.threads)
+        qps_mt = time_batch(lambda t, index=index: index.search(t, k), test)
+        faiss.omp_set_num_threads(1)
+        points.append(result(f"nprobe={nprobe}", recall_at_k(returned, truth, k), qps, qps_mt))
     return {"build_s": round(build_s, 2), "bytes": size, "points": points,
             "config": f"nlist={nlist},m_pq={m_pq},nbits=8"}
 
@@ -322,6 +346,8 @@ def main():
     ap.add_argument("--hnsw-m", type=int, default=16)
     ap.add_argument("--ef-construction", type=int, default=200)
     ap.add_argument("--ivf-nlist", type=int, default=1024)
+    ap.add_argument("--threads", type=int, default=os.cpu_count() or 1,
+                    help="threads for the multi-threaded (batched) QPS number")
     args = ap.parse_args()
 
     if args.base:
@@ -375,9 +401,10 @@ def main():
         out["indexes"][name] = res
         mb = f"{res['bytes'] / 1e6:.1f}MB" if res.get("bytes") else "n/a"
         print(f"  build {res.get('build_s')}s, index {mb}")
-        print(f"  {'knob':>14} {'recall@'+str(args.k):>10} {'QPS(1T)':>10}")
+        print(f"  {'knob':>14} {'recall@'+str(args.k):>10} {'QPS(1T)':>10} {'QPS('+str(args.threads)+'T)':>11}")
         for p in res["points"]:
-            print(f"  {p['knob']:>14} {p['recall']:>10.4f} {p['qps']:>10.1f}")
+            mt = f"{p['qps_mt']:>11.1f}" if p.get("qps_mt") is not None else f"{'-':>11}"
+            print(f"  {p['knob']:>14} {p['recall']:>10.4f} {p['qps']:>10.1f} {mt}")
         print()
 
     if args.out:
