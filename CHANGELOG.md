@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 (2026-06-09)
 
 - Single-query `Index.search` now reuses a cached search context and
   output buffers instead of going through the batch path; ~20% more QPS
