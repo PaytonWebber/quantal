@@ -153,6 +153,21 @@ pub fn RoutingGraph(comptime bits: usize, comptime max_edges: usize) type {
             self.* = undefined;
         }
 
+        /// Heap bytes owned by the graph, counting allocated capacity.
+        /// Hash-map overhead is approximated from entry size.
+        pub fn memoryBytes(self: *const Self) usize {
+            var total: usize = self.layers.capacity * @sizeOf(Layer);
+            for (self.layers.items) |*layer| {
+                total += layer.nodes.capacity * @sizeOf(Node);
+                total += layer.bit_vectors.capacity * @sizeOf(BitVec);
+                total += layer.slot_by_id.capacity() * (@sizeOf(u64) + @sizeOf(u32) + 1);
+            }
+            total += (self.build_scratch.visited.bit_length + 63) / 64 * 8;
+            total += self.build_scratch.cand_buf.len * @sizeOf(Candidate);
+            total += self.build_scratch.result_buf.len * @sizeOf(Candidate);
+            return total;
+        }
+
         /// Inserts a node under a dense id (ids must arrive as 0, 1, 2, ...;
         /// they double as indices into the visited bitset and payload array).
         pub fn insert(self: *Self, allocator: std.mem.Allocator, id: u64, code: BitVec) !void {

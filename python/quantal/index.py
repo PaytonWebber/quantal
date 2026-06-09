@@ -21,6 +21,8 @@ _u64p = _native._u64p
 _f32p = _native._f32p
 _usizep = _native._usizep
 
+_MAX_K = 256  # single-query result cap in the C ABI
+
 
 class Index:
     def __init__(self, dim=None, *, lib_path=None, ef_construction=200, seed=42,
@@ -37,6 +39,8 @@ class Index:
         self._next_id = 0
         self._contexts = {}
         self._context_len = -1
+        self._hit_ids = np.zeros(_MAX_K, dtype=np.uint64)
+        self._hit_scores = np.zeros(_MAX_K, dtype=np.float32)
 
     # --- ingest ---
 
@@ -71,13 +75,37 @@ class Index:
     def __len__(self):
         return int(self._lib.quantal_index_len(self._handle))
 
+    @property
+    def memory_bytes(self):
+        """Exact heap bytes owned by the native index (not process RSS)."""
+        if not hasattr(self._lib, "quantal_index_memory_bytes"):
+            raise RuntimeError(
+                "this quantal library predates memory accounting; rebuild it "
+                "or upgrade the package"
+            )
+        return int(self._lib.quantal_index_memory_bytes(self._handle))
+
     # --- query ---
 
     def search(self, query, k=10, m=128):
-        """Single-query search -> list of (id, score), best first."""
-        scores, ids, counts = self.search_batch(self._as_matrix(query, "query"), k=k, m=m, threads=1)
-        c = counts[0]
-        return list(zip(ids[0, :c].tolist(), scores[0, :c].tolist()))
+        """Single-query search -> list of (id, score), best first.
+
+        Reuses a cached search context and output buffers, so repeated
+        single queries pay no per-call allocation. k above the C ABI's
+        256-result cap falls back to the batch path."""
+        query = self._as_matrix(query, "query")
+        if query.shape[0] != 1:
+            raise ValueError("search takes a single query; use search_batch")
+        if k > _MAX_K:
+            scores, ids, counts = self.search_batch(query, k=k, m=m, threads=1)
+            c = counts[0]
+            return list(zip(ids[0, :c].tolist(), scores[0, :c].tolist()))
+        ctx = self._context(m)
+        count = self._lib.quantal_search(
+            self._handle, ctx, query.ctypes.data_as(_f32p), k,
+            self._hit_ids.ctypes.data_as(_u64p), self._hit_scores.ctypes.data_as(_f32p),
+        )
+        return list(zip(self._hit_ids[:count].tolist(), self._hit_scores[:count].tolist()))
 
     def search_batch(self, queries, k=10, m=128, threads=0):
         """Batch search -> (scores, ids, counts) numpy arrays; row i is valid

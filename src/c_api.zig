@@ -74,6 +74,12 @@ export fn quantal_index_len(handle: *const Handle) usize {
     return handle.index.len();
 }
 
+/// Exact heap bytes owned by the index (not process RSS). See
+/// Index.memoryBytes.
+export fn quantal_index_memory_bytes(handle: *const Handle) usize {
+    return handle.index.memoryBytes();
+}
+
 /// Multi-threaded bulk ingest of n vectors (row-major coords, n*dim floats).
 export fn quantal_index_add_batch(handle: *Handle, ids: [*]const u64, coords: [*]const f32, n: usize, threads: usize) i32 {
     handle.index.addBatch(allocator, ids[0..n], coords[0 .. n * c_dim], threads) catch |err| return errCode(err);
@@ -232,4 +238,14 @@ test "C API roundtrip" {
     for (scores[0..9], scores[1..10]) |a, b| {
         try std.testing.expect(a >= b);
     }
+
+    // Exact accounting must cover at least the payload bytes and grow
+    // with inserts.
+    const mem_50 = quantal_index_memory_bytes(handle);
+    try std.testing.expect(mem_50 > 50 * @sizeOf(CIndex.Payload));
+    for (0..50) |i| {
+        for (&coords) |*c| c.* = rand.floatNorm(f32);
+        try std.testing.expectEqual(@as(i32, 0), quantal_index_add(handle, 200 + i, &coords));
+    }
+    try std.testing.expect(quantal_index_memory_bytes(handle) > mem_50);
 }

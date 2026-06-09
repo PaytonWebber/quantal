@@ -47,6 +47,10 @@ int32_t quantal_index_remove(quantal_index *index, uint64_t id);
 /* Number of live (non-removed) vectors. */
 size_t quantal_index_len(const quantal_index *index);
 
+/* Exact heap bytes owned by the index (payloads, routing graph, rerank
+ * store, bookkeeping) — precise accounting, not process RSS. */
+size_t quantal_index_memory_bytes(const quantal_index *index);
+
 /* Persistence (.tq format). quantal_index_load returns NULL on failure. */
 int32_t quantal_index_save(const quantal_index *index, const char *path);
 quantal_index *quantal_index_load(const char *path);

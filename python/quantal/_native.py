@@ -53,6 +53,11 @@ _SIGS = {
     "quantal_index_add_batch": ([ctypes.c_void_p, _u64p, _f32p, ctypes.c_size_t, ctypes.c_size_t], ctypes.c_int32),
     "quantal_index_remove": ([ctypes.c_void_p, ctypes.c_uint64], ctypes.c_int32),
     "quantal_index_len": ([ctypes.c_void_p], ctypes.c_size_t),
+    "quantal_index_memory_bytes": ([ctypes.c_void_p], ctypes.c_size_t),
+    "quantal_search": (
+        [ctypes.c_void_p, ctypes.c_void_p, _f32p, ctypes.c_size_t, _u64p, _f32p],
+        ctypes.c_size_t,
+    ),
     "quantal_index_save": ([ctypes.c_void_p, ctypes.c_char_p], ctypes.c_int32),
     "quantal_index_load": ([ctypes.c_char_p], ctypes.c_void_p),
     "quantal_context_create": ([ctypes.c_void_p, ctypes.c_size_t], ctypes.c_void_p),
@@ -73,8 +78,9 @@ _cache = {}  # (resolved path) -> bound CDLL
 def _bind(path):
     lib = ctypes.CDLL(path)
     for name, (argtypes, restype) in _SIGS.items():
-        fn = getattr(lib, name)
-        fn.argtypes, fn.restype = argtypes, restype
+        fn = getattr(lib, name, None)  # older libraries may lack newer entries
+        if fn is not None:
+            fn.argtypes, fn.restype = argtypes, restype
     return lib
 
 

@@ -36,8 +36,7 @@ class Quantal(BaseANN):
 
     def query(self, v, n):
         v = self._prep(v.reshape(1, -1))
-        _, ids, counts = self._index.search_batch(v, k=n, m=self._m, threads=1)
-        return ids[0, : counts[0]]
+        return [id_ for id_, _ in self._index.search(v, k=n, m=self._m)]
 
     def batch_query(self, X, n):
         X = self._prep(X)

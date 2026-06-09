@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Single-query `Index.search` now reuses a cached search context and
+  output buffers instead of going through the batch path; ~20% more QPS
+  at 1M scale through the Python layer.
+- `quantal_index_memory_bytes` in the C ABI and `Index.memory_bytes` in
+  Python: exact heap accounting for the index (payloads, routing graph,
+  rerank store, bookkeeping), as opposed to RSS sampling.
+
 ## 0.1.1 (2026-06-09)
 
 - x86-64 wheels now bundle x86-64-v3 (AVX2) and x86-64-v4 (AVX-512)

@@ -157,6 +157,29 @@ pub fn Index(comptime dim: usize, comptime max_edges: usize, comptime routing_bi
             return self.live_count;
         }
 
+        /// Heap bytes owned by the index: rotation/projection matrices,
+        /// quantized payloads, routing graph, rerank store, and bookkeeping.
+        /// Counts allocated capacity; hash-map overhead is approximated.
+        /// Search contexts are owned by callers and not counted.
+        pub fn memoryBytes(self: *const Self) usize {
+            var total: usize = @sizeOf(Self);
+            total += dim * dim * @sizeOf(f32);
+            if (uses_projection) total += routing_bits * dim * @sizeOf(f32);
+            total += self.route_buf.len * @sizeOf(f32);
+            total += self.payloads.capacity * @sizeOf(Payload);
+            total += self.routing.memoryBytes();
+            total += self.originals.capacity * @sizeOf(f32);
+            total += self.sq8_codes.capacity * @sizeOf(i8);
+            total += self.sq8_scales.capacity * @sizeOf(f32);
+            total += (self.calib_shift.len + self.calib_scale.len) * @sizeOf(f32);
+            total += self.pending_coords.capacity * @sizeOf(f32);
+            total += self.pending_ids.capacity * @sizeOf(u64);
+            total += (self.calib_buf.len + self.rotate_buf.len) * @sizeOf(f32);
+            total += self.id_to_internal.capacity() * (2 * @sizeOf(u64) + 1);
+            total += (self.tombstones.bit_length + 63) / 64 * 8;
+            return total;
+        }
+
         /// Number of internal slots, including tombstoned ones (graph nodes
         /// and payload records are never compacted in place).
         pub fn capacity(self: *const Self) usize {
