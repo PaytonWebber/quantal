@@ -1,19 +1,33 @@
 float:
-  any:
-    - base_args: ["@metric", "@dimension"]
-      constructor: QuantaJump
-      disabled: false
-      docker_tag: ann-benchmarks-quantal
-      module: ann_benchmarks.algorithms.quantal
-      name: quantal
-      run_groups:
-        # ef_construction is the build-time beam; m is the search-time beam
-        # (the recall/QPS dial). One run group per ef, swept over m.
-        ef-200:
-          arg_groups: [{ ef_construction: 200 }]
-          args: {}
-          query_args: [[64, 128, 256, 512, 1024]]
-        ef-400:
-          arg_groups: [{ ef_construction: 400 }]
-          args: {}
-          query_args: [[64, 128, 256, 512, 1024]]
+  angular:
+  - base_args: ['@metric', '@dimension']
+    constructor: Quantal
+    disabled: false
+    docker_tag: ann-benchmarks-quantal
+    module: ann_benchmarks.algorithms.quantal
+    name: quantal
+    run_groups:
+      ef-200:
+        arg_groups: [{ef_construction: 200}]
+        args: {}
+        query_args: [[32, 64, 128, 256, 512, 1024]]
+      ef-400:
+        arg_groups: [{ef_construction: 400}]
+        args: {}
+        query_args: [[32, 64, 128, 256, 512, 1024]]
+  dot:
+  - base_args: ['@metric', '@dimension']
+    constructor: Quantal
+    disabled: false
+    docker_tag: ann-benchmarks-quantal
+    module: ann_benchmarks.algorithms.quantal
+    name: quantal
+    run_groups:
+      ef-200:
+        arg_groups: [{ef_construction: 200}]
+        args: {}
+        query_args: [[32, 64, 128, 256, 512, 1024]]
+      ef-400:
+        arg_groups: [{ef_construction: 400}]
+        args: {}
+        query_args: [[32, 64, 128, 256, 512, 1024]]
