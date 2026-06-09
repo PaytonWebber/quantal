@@ -4,8 +4,8 @@
 [![CI](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml/badge.svg)](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A full-precision graph needs 6.3 GB to search 1M OpenAI embeddings. quantal
-does it in 2.6 GB at 0.99 recall@10, faster.
+**A full-precision graph needs 6.3 GB to search 1M OpenAI embeddings. quantal
+does it in 2.6 GB at 0.99 recall@10, faster.**
 
 quantal is a vector index you link into an application, not a server you
 run: a Zig core behind a C ABI, Python bindings, and drop-in stores for
