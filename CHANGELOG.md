@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-06-09)
 
 - x86-64 wheels now bundle x86-64-v3 (AVX2) and x86-64-v4 (AVX-512)
   variants of each library alongside the portable baseline; the loader
