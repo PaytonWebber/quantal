@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- x86-64 wheels now bundle x86-64-v3 (AVX2) and x86-64-v4 (AVX-512)
+  variants of each library alongside the portable baseline; the loader
+  picks the best one the CPU supports. The baseline-only 0.1.0 wheels
+  ran ~8x slower than native on modern x86-64.
+
 ## 0.1.0 (2026-06-04)
 
 First release.
