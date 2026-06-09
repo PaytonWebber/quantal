@@ -1,7 +1,7 @@
 FROM ann-benchmarks
 
 # Python layer from PyPI; the native libraries are rebuilt below.
-RUN pip install quantaldb==0.1.0
+RUN pip install quantaldb==0.1.2
 
 # quantal fixes the vector dimension at compile time and compiles missing
 # dimensions on demand from a source checkout. Zig is distributed as a
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils c
 RUN curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
         | tar -xJ -C /opt \
     && ln -s /opt/zig-x86_64-linux-${ZIG_VERSION}/zig /usr/local/bin/zig
-RUN git clone --branch v0.1.0 --depth 1 https://github.com/PaytonWebber/quantal /opt/quantal
+RUN git clone --branch v0.1.2 --depth 1 https://github.com/PaytonWebber/quantal /opt/quantal
 ENV QUANTAL_SRC=/opt/quantal
 
 # The wheel bundles portable baseline-x86-64 libraries. Benchmark numbers
