@@ -4,23 +4,64 @@
 [![CI](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml/badge.svg)](https://github.com/PaytonWebber/quantal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-quantal is a vector index you link into an application, not a server you run.
-It combines graph routing with quantized codes: a 1-bit SimHash graph routes
-each query to a few hundred candidates, 3-bit TurboQuant codes score that pool,
-and a final rerank pass uses a stored rerank representation to order the
-returned candidates. Search routes through the graph instead of scanning every
-vector, and the default index stores compact quantized data instead of
-full-precision vectors.
+A full-precision graph needs 6.3 GB to search 1M OpenAI embeddings. quantal
+does it in 2.6 GB at 0.99 recall@10, faster.
 
-It began as a question: how close can a quantized index get to a full-precision
-graph on the recall/QPS frontier while spending less memory? The
-[Results](#results) section reports the measurements on standard datasets
-against same-machine baselines, including where it does not win.
+quantal is a vector index you link into an application, not a server you
+run: a Zig core behind a C ABI, Python bindings, and drop-in stores for
+LangChain, LlamaIndex, and LangGraph. The routing graph is
+[HNSW](https://arxiv.org/abs/1603.09320) over 1-bit SimHash codes; the
+scoring is Google Research's
+[TurboQuant](https://arxiv.org/abs/2504.19874) at 3 bits, settled by an
+exact rerank pass over a compact stored representation.
 
-The implementation is a Zig core with a C ABI, Python bindings, and drop-in
-LangChain, LlamaIndex, and LangGraph stores. The routing graph is
-[HNSW](https://arxiv.org/abs/1603.09320); the quantization is Google Research's
-[TurboQuant](https://arxiv.org/abs/2504.19874).
+It began as a question: how close can a quantized index get to a
+full-precision graph on the recall/QPS frontier while spending less
+memory? The [Results](#results) section reports the measurements on
+standard datasets against same-machine baselines, including where it
+does not win.
+
+## Quick start
+
+```bash
+pip install quantaldb
+```
+
+The package is `quantaldb`; the import is `quantal`:
+
+```python
+import numpy as np
+from quantal import Index
+
+index = Index(dim=1536)
+ids = index.add(vectors)                 # (n, 1536) float32, auto-assigned ids
+hits = index.search(query, k=10)         # -> [(id, score), ...], cosine
+index.save("docs.tq")
+index.memory_bytes                       # exact heap bytes, not RSS
+```
+
+Already on a framework? The stores are drop-in:
+
+```python
+from quantal.langchain import QuantalVectorStore        # swap for FAISS/InMemory
+from quantal.llama_index import QuantalVectorStore
+from quantal.langgraph_store import QuantalStore        # agent memory
+```
+
+Wheels bundle prebuilt libraries for the common embedding dimensions
+(256/384/512/768/1024/1536/3072) on Linux, macOS (Apple Silicon), and
+Windows, with AVX-512/AVX2 variants picked at load time, so `pip install`
+runs within a few percent of a native build. For other dimensions,
+install from a source checkout with [Zig](https://ziglang.org) 0.16 on
+your PATH (`pip install -e python`) and the right library is built on
+first use.
+
+Zig:
+
+```zig
+const quantal = @import("quantal");
+var index = try quantal.Index(768, 16, 768).init(allocator, 200, 42);
+```
 
 ## Where It Fits
 
@@ -119,53 +160,6 @@ python benchmarks/plot_frontier.py \
   --outdir docs
 ```
 
-## Install
-
-```bash
-pip install quantaldb
-```
-
-The package is `quantaldb`; the import is `quantal`:
-
-```python
-from quantal import Index
-```
-
-Wheels bundle prebuilt libraries for the common embedding dimensions
-(256/384/512/768/1024/1536/3072) on Linux, macOS (Apple Silicon), and Windows.
-For other dimensions, install from a source checkout with
-[Zig](https://ziglang.org) 0.16 on your PATH (`pip install -e python`) and the
-right library is built on first use.
-
-## Usage
-
-Python:
-
-```python
-import numpy as np
-from quantal import Index
-
-index = Index(dim=768)
-ids = index.add(vectors)                 # (n, 768) float32, auto-assigned ids
-hits = index.search(query, k=10)         # -> [(id, score), ...], cosine
-index.save("docs.tq")
-```
-
-Zig:
-
-```zig
-const quantal = @import("quantal");
-var index = try quantal.Index(768, 16, 768).init(allocator, 200, 42);
-```
-
-Drop-in framework stores:
-
-```python
-from quantal.langchain import QuantalVectorStore        # swap for FAISS/InMemory
-from quantal.llama_index import QuantalVectorStore
-from quantal.langgraph_store import QuantalStore        # agent memory
-```
-
 ## How it works
 
 1. **Route (1-bit).** Each vector is preconditioned with a random rotation and
@@ -193,10 +187,13 @@ zig build -Doptimize=ReleaseFast -Dc-dim=768   # build the C library + binaries
 ## Status
 
 Benchmarked on a single laptop. The runs are single-machine and single-run, so
-expect some variance. The Zig core and C ABI are tested in CI on Linux, macOS,
-and Windows; the Python package and framework wrappers are tested on Linux and
-macOS, with wheel smoke tests on every published platform. Wheels are published
-to PyPI as `quantaldb`; a Rust crate is not published yet.
+expect some variance. The frontier also reproduces under the independent
+[ann-benchmarks](https://github.com/erikbern/ann-benchmarks) protocol; the
+adapter lives in [benchmarks/ann-benchmarks/](benchmarks/ann-benchmarks/) and
+is submitted upstream. The Zig core and C ABI are tested in CI on Linux,
+macOS, and Windows; the Python package and framework wrappers are tested on
+Linux and macOS, with wheel smoke tests on every published platform. Wheels
+are published to PyPI as `quantaldb`; a Rust crate is not published yet.
 
 ## How this was built
 
