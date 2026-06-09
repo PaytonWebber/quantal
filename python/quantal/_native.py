@@ -7,6 +7,9 @@ ready ctypes handle. Resolution order:
   1. QUANTAL_LIB env var (an explicit library path), or an explicit arg.
   2. A binary bundled in the installed wheel (quantal/_libs/) — covers the
      common embedding dimensions, so `pip install` works with no toolchain.
+     On x86-64 the wheel carries SIMD variants per dimension (.v4 for
+     AVX-512, .v3 for AVX2, unsuffixed baseline) and the best one the
+     running CPU supports is picked here.
   3. A cached build at ~/.cache/quantal/.
   4. Build it with `zig build -Dc-dim=N` if the source tree and `zig` are
      found (the long tail of uncommon dimensions), then cache it.
@@ -17,6 +20,7 @@ If none apply, a clear error explains how to produce the library.
 import ctypes
 import os
 import pathlib
+import platform
 import shutil
 import subprocess
 import sys
@@ -83,10 +87,45 @@ def _project_root():
     return pathlib.Path(env) if env else None
 
 
+def _x86_level():
+    """The x86-64 microarchitecture level of this CPU (4, 3, or 0)."""
+    if platform.machine().lower() not in ("x86_64", "amd64"):
+        return 0
+    if sys.platform == "win32":
+        present = ctypes.windll.kernel32.IsProcessorFeaturePresent
+        # PF_AVX512F_INSTRUCTIONS_AVAILABLE / PF_AVX2_INSTRUCTIONS_AVAILABLE
+        return 4 if present(41) else 3 if present(40) else 0
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("flags"):
+                    flags = set(line.split(":", 1)[1].split())
+                    break
+            else:
+                return 0
+    except OSError:
+        return 0
+    if {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"} <= flags:
+        return 4
+    # avx2+fma+bmi2 implies the rest of x86-64-v3 on every shipped CPU.
+    if {"avx2", "fma", "bmi2"} <= flags:
+        return 3
+    return 0
+
+
+_X86_LEVEL = _x86_level()
+
+
 def _bundled(dim):
-    """A prebuilt library shipped inside the installed wheel, if present."""
-    p = os.path.join(os.path.dirname(__file__), "_libs", _lib_name(dim))
-    return p if os.path.exists(p) else None
+    """The best prebuilt wheel library this CPU supports, if present."""
+    lib_dir = os.path.join(os.path.dirname(__file__), "_libs")
+    name, ext = f"quantal-dim{dim}", _LIB_EXT
+    suffixes = [".v4", ".v3", ""] if _X86_LEVEL >= 4 else [".v3", ""] if _X86_LEVEL == 3 else [""]
+    for suffix in suffixes:
+        p = os.path.join(lib_dir, name + suffix + ext)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def _cache_dir():

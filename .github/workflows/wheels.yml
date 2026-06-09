@@ -20,13 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x86_64,   os: ubuntu-latest,  zig_target: "x86_64-linux-gnu.2.28",  repair: auditwheel }
-          - { name: linux-aarch64,  os: ubuntu-24.04-arm, zig_target: "aarch64-linux-gnu.2.28", repair: auditwheel }
-          - { name: macos-arm64,    os: macos-14,       zig_target: "",  repair: none }
+          - { name: linux-x86_64,   os: ubuntu-latest,  zig_target: "x86_64-linux-gnu.2.28",  repair: auditwheel, lib_flags: "--x86-variants" }
+          - { name: linux-aarch64,  os: ubuntu-24.04-arm, zig_target: "aarch64-linux-gnu.2.28", repair: auditwheel, lib_flags: "" }
+          - { name: macos-arm64,    os: macos-14,       zig_target: "",  repair: none, lib_flags: "" }
           # Intel macOS (macos-13) runners are deprecated and no longer
           # scheduled; Apple Silicon is the default Mac. Re-add via a Zig
           # cross-build (-Dtarget=x86_64-macos) if Intel support is needed.
-          - { name: windows-x86_64, os: windows-latest, zig_target: "",  repair: none }
+          - { name: windows-x86_64, os: windows-latest, zig_target: "",  repair: none, lib_flags: "--x86-variants" }
     steps:
       - uses: actions/checkout@v4
 
@@ -43,9 +43,9 @@ jobs:
         run: |
           cd python
           if [ -n "${{ matrix.zig_target }}" ]; then
-            python build_libs.py --target "${{ matrix.zig_target }}"
+            python build_libs.py --target "${{ matrix.zig_target }}" ${{ matrix.lib_flags }}
           else
-            python build_libs.py
+            python build_libs.py ${{ matrix.lib_flags }}
           fi
 
       - name: Build wheel
