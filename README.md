@@ -16,10 +16,10 @@ scoring is Google Research's
 exact rerank pass over a compact stored representation.
 
 It began as a question: how close can a quantized index get to a
-full-precision graph on the recall/QPS frontier while spending less
-memory? The [Results](#results) section reports the measurements on
-standard datasets against same-machine baselines, including where it
-does not win.
+full-precision graph on recall and speed while spending less memory?
+The [Results](#results) section reports the measurements on standard
+datasets against same-machine baselines, including where it does not
+win.
 
 ## Quick start
 
@@ -101,7 +101,7 @@ recall means the speed comparison is made at the same result quality.
 ### High-dimensional embeddings (DBpedia, text-embedding-3-large, d=1536)
 
 At 1M vectors, single thread. The table samples three points from the plotted
-frontier, not separate tuned runs. Cells show QPS at the measured recall for
+curve, not separate tuned runs. Cells show QPS at the measured recall for
 the first operating point that meets each threshold:
 
 ![DBpedia 1M: recall vs QPS](docs/frontier_dbpedia1m.svg)
@@ -119,13 +119,13 @@ quantal tops out at 0.9937 recall@10; FAISS-HNSW reaches 0.9958 at lower QPS.
 
 ![DBpedia 1M: index memory](docs/memory_dbpedia1m.svg)
 
-The 100k frontier has the same shape, and the full-precision graphs reach
+The 100k curve has the same shape, and the full-precision graphs reach
 farther into the extreme recall tail:
 
 ![DBpedia 100k: recall vs QPS](docs/frontier_dbpedia100k.svg)
 
 The compressed baselines define the low-memory corner, not the high-recall
-frontier. At 1M, turbovec's linear scan uses 771 MB and runs at ~13-24 QPS. On
+end. At 1M, turbovec's linear scan uses 771 MB and runs at ~13-24 QPS. On
 the 100k slice, FAISS-IVFPQ uses 15 MB, but recall@10 plateaus at 0.486 at this
 dimensionality.
 
@@ -187,10 +187,11 @@ zig build -Doptimize=ReleaseFast -Dc-dim=768   # build the C library + binaries
 ## Status
 
 Benchmarked on a single laptop. The runs are single-machine and single-run, so
-expect some variance. The frontier also reproduces under the independent
-[ann-benchmarks](https://github.com/erikbern/ann-benchmarks) protocol; the
-adapter lives in [benchmarks/ann-benchmarks/](benchmarks/ann-benchmarks/) and
-is submitted upstream. The Zig core and C ABI are tested in CI on Linux,
+expect some variance. The recall and QPS results also reproduce under the
+independent [ann-benchmarks](https://github.com/erikbern/ann-benchmarks)
+protocol; the adapter lives in
+[benchmarks/ann-benchmarks/](benchmarks/ann-benchmarks/) and is submitted
+upstream. The Zig core and C ABI are tested in CI on Linux,
 macOS, and Windows; the Python package and framework wrappers are tested on
 Linux and macOS, with wheel smoke tests on every published platform. Wheels
 are published to PyPI as `quantaldb`; a Rust crate is not published yet.
